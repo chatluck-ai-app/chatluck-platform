@@ -323,4 +323,4 @@ async def export_memory(user: User = Depends(get_current_user), session=Depends(
              "created_at": m.created_at.isoformat()}
             for m in result.scalars().all()
         ],
-  }
+    }
