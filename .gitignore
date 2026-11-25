@@ -1,0 +1,13 @@
+.env
+__pycache__/
+*.db
+.pytest_cache/
+node_modules/
+.next/
+
+# Android build artifacts
+android/.gradle/
+**/build/
+*.apk
+.env.*
+!.env.example
