@@ -296,6 +296,78 @@ export async function extractFile(
   return resp.json();
 }
 
+export interface MeInfo {
+  id: string;
+  email: string;
+  display_name: string;
+}
+
+export async function getMe(token: string): Promise<MeInfo> {
+  const resp = await fetch(`${API_URL}/v1/auth/me`, { headers: headers(token) });
+  if (!resp.ok) throw new Error("تعذر تحميل الملف الشخصي");
+  return resp.json();
+}
+
+export async function updateMe(token: string, displayName: string): Promise<void> {
+  const resp = await fetch(`${API_URL}/v1/auth/me`, {
+    method: "PATCH",
+    headers: headers(token),
+    body: JSON.stringify({ display_name: displayName }),
+  });
+  if (!resp.ok) throw new Error(errorDetail(await resp.json(), "فشل حفظ الاسم"));
+}
+
+export async function changePassword(
+  token: string,
+  currentPassword: string,
+  newPassword: string
+): Promise<void> {
+  const resp = await fetch(`${API_URL}/v1/auth/change-password`, {
+    method: "POST",
+    headers: headers(token),
+    body: JSON.stringify({
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+  });
+  if (!resp.ok)
+    throw new Error(errorDetail(await resp.json(), "فشل تغيير كلمة السر"));
+}
+
+export interface MemoryItem {
+  id: string;
+  kind: string;
+  content: string;
+  created_at: string;
+}
+
+export async function listMemory(token: string): Promise<MemoryItem[]> {
+  const resp = await fetch(`${API_URL}/v1/memory`, { headers: headers(token) });
+  if (!resp.ok) throw new Error("تعذر تحميل الذاكرة");
+  return resp.json();
+}
+
+export async function addMemory(
+  token: string,
+  kind: string,
+  content: string
+): Promise<void> {
+  const resp = await fetch(`${API_URL}/v1/memory`, {
+    method: "POST",
+    headers: headers(token),
+    body: JSON.stringify({ kind, content }),
+  });
+  if (!resp.ok) throw new Error(errorDetail(await resp.json(), "فشل حفظ الذاكرة"));
+}
+
+export async function deleteMemory(token: string, id: string): Promise<void> {
+  const resp = await fetch(`${API_URL}/v1/memory/${id}`, {
+    method: "DELETE",
+    headers: headers(token),
+  });
+  if (!resp.ok) throw new Error("فشل حذف الذاكرة");
+}
+
 export interface ImageResult {
   url: string;
   provider: string;
