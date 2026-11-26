@@ -15,7 +15,7 @@ from .deps import (
     get_router,
     get_session,
 )
-from .models import Conversation, MemoryItem, Message, User
+from .models import Conversation, GeneratedImage, MemoryItem, Message, User
 from .providers.base import Message as ProviderMessage
 from .schemas import (
     ChatRequest,
@@ -303,6 +303,15 @@ async def search_conversations(
     return matches
 
 
+IMAGE_STYLES = {
+    "realistic": "ultra realistic photograph, detailed, ",
+    "anime": "anime style illustration, ",
+    "oil": "oil painting, artistic, ",
+    "3d": "3d render, octane, high detail, ",
+    "fantasy": "fantasy art, magical, ",
+}
+
+
 @router.post("/images")
 async def generate_image(
     body: dict,
@@ -314,16 +323,72 @@ async def generate_image(
     prompt = (body.get("prompt") or "").strip()
     if not prompt:
         raise HTTPException(status_code=422, detail="prompt is required")
+    width = int(body.get("width") or 1024)
+    height = int(body.get("height") or 1024)
+    if not (256 <= width <= 1920) or not (256 <= height <= 1920):
+        raise HTTPException(status_code=422, detail="invalid dimensions")
+    style = (body.get("style") or "").strip()
+    styled_prompt = IMAGE_STYLES.get(style, "") + prompt
+    import random
+
     router = get_router(request)
     try:
-        url, provider_name, model_id = await router.generate_image(prompt)
+        url, provider_name, model_id = await router.generate_image(
+            styled_prompt, width=width, height=height, seed=random.randint(1, 10**9)
+        )
     except Exception as exc:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=friendly_error(str(exc)),
         ) from exc
+    row = GeneratedImage(
+        user_id=user.id,
+        prompt=prompt,
+        url=url,
+        provider=provider_name,
+        model=model_id,
+        width=width,
+        height=height,
+        style=style,
+    )
+    session.add(row)
     await audit(session, user.id, "image.generate", f"provider={provider_name}")
     await session.commit()
-    return {"url": url, "provider": provider_name, "model": model_id}
+    return {
+        "id": row.id,
+        "url": url,
+        "provider": provider_name,
+        "model": model_id,
+        "prompt": prompt,
+        "width": width,
+        "height": height,
+        "style": style,
+    }
+
+
+@router.get("/images/history")
+async def image_history(
+    user: User = Depends(get_current_user), session=Depends(get_session)
+):
+    result = await session.execute(
+        select(GeneratedImage)
+        .where(GeneratedImage.user_id == user.id)
+        .order_by(GeneratedImage.created_at.desc())
+    )
+    return [
+        {
+            "id": g.id,
+            "prompt": g.prompt,
+            "url": g.url,
+            "provider": g.provider,
+            "model": g.model,
+            "width": g.width,
+            "height": g.height,
+            "style": g.style,
+            "created_at": g.created_at.isoformat(),
+        }
+        for g in result.scalars().all()
+    ]
 
 
 @router.get("/conversations", response_model=list[ConversationResponse])
