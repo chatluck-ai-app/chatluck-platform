@@ -108,3 +108,22 @@ async def test_change_password_and_profile(client):
         "/v1/auth/login", json={"email": "settings@test.com", "password": "newpass123"}
     )
     assert resp.status_code == 200
+
+
+async def test_login_wrong_password_returns_arabic_error(client):
+    await register_user(client)
+    resp = await client.post(
+        "/v1/auth/login", json={"email": "hossam@example.com", "password": "wrong-pass"}
+    )
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "الإيميل أو كلمة السر غير صحيحة"
+
+
+async def test_duplicate_register_returns_arabic_error(client):
+    await register_user(client)
+    resp = await client.post(
+        "/v1/auth/register",
+        json={"email": "hossam@example.com", "password": "secret123", "display_name": "x"},
+    )
+    assert resp.status_code == 409
+    assert "مسجل" in resp.json()["detail"]
