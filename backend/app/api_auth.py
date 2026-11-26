@@ -57,3 +57,40 @@ async def login(body: LoginRequest, request: Request, session=Depends(get_sessio
 @router.get("/me", response_model=UserResponse)
 async def me(user: User = Depends(get_current_user)):
     return UserResponse(id=user.id, email=user.email, display_name=user.display_name)
+
+
+@router.patch("/me", response_model=UserResponse)
+async def update_me(
+    body: dict,
+    user: User = Depends(get_current_user),
+    session=Depends(get_session),
+):
+    name = (body.get("display_name") or "").strip()
+    if not name or len(name) > 120:
+        raise HTTPException(status_code=422, detail="display_name must be 1-120 characters")
+    user.display_name = name
+    await audit(session, user.id, "auth.update_profile")
+    await session.commit()
+    return UserResponse(id=user.id, email=user.email, display_name=user.display_name)
+
+
+@router.post("/change-password", status_code=204)
+async def change_password(
+    body: dict,
+    user: User = Depends(get_current_user),
+    session=Depends(get_session),
+):
+    current = body.get("current_password") or ""
+    new = body.get("new_password") or ""
+    if not verify_password(current, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="كلمة السر الحالية غير صحيحة",
+        )
+    if len(new) < 8 or len(new) > 128:
+        raise HTTPException(
+            status_code=422, detail="كلمة السر الجديدة لازم تكون 8 أحرف على الأقل"
+        )
+    user.password_hash = hash_password(new)
+    await audit(session, user.id, "auth.change_password")
+    await session.commit()
