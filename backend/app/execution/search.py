@@ -180,6 +180,19 @@ async def _wikipedia(
     ]
 
 
+_FILLER = re.compile(
+    r"(إيه|ايه|إزاي|ازاي|ليه|لماذا|بكام|كام|متى|فين|منين|النهاردة|النهارده|دلوقتي|"
+    r"حالا|حالاً|من فضلك|لو سمحت|عامل|عاملة|يعني|طب|؟|\?|!|،)",
+    re.IGNORECASE,
+)
+
+
+def clean_query(text: str) -> str:
+    """Strip Egyptian/Arabic question fillers so search engines see keywords."""
+    words = [w for w in _FILLER.sub(" ", text).split() if len(w) > 1]
+    return " ".join(words[:10]) or text.strip()
+
+
 async def search_web(
     query: str,
     limit: int = 5,
@@ -188,11 +201,12 @@ async def search_web(
 ) -> list[SearchResult]:
     own = client is None
     client = client or httpx.AsyncClient(timeout=20.0)
+    cleaned = clean_query(query)
     try:
         results: list[SearchResult] = []
         for fetch in (_duckduckgo_html, _duckduckgo_lite, _mojeek):
             try:
-                results = await fetch(query, client, limit)
+                results = await fetch(cleaned, client, limit)
                 if results:
                     break
             except Exception:
@@ -201,7 +215,7 @@ async def search_web(
             for lang in ("ar", "en"):
                 try:
                     wiki = await _wikipedia(
-                        query, client, max(2, limit // 2), lang=lang
+                        cleaned, client, max(2, limit // 2), lang=lang
                     )
                     results += wiki
                     if wiki:
