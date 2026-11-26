@@ -25,6 +25,24 @@ export interface ModelInfo {
   available: boolean;
 }
 
+/** FastAPI returns detail as a string (our errors) or an array of
+ * {loc, msg} objects (request validation). Always produce readable text. */
+export function errorDetail(data: unknown, fallback: string): string {
+  const d = (data as { detail?: unknown })?.detail;
+  if (typeof d === "string") return d;
+  if (Array.isArray(d) && d.length > 0) {
+    return d
+      .map((e) => {
+        const loc = Array.isArray(e?.loc) ? e.loc[e.loc.length - 1] : "";
+        const msg = typeof e?.msg === "string" ? e.msg : "";
+        return loc ? `${loc}: ${msg}` : msg;
+      })
+      .filter(Boolean)
+      .join(" — ");
+  }
+  return fallback;
+}
+
 function headers(token: string): HeadersInit {
   return {
     "Content-Type": "application/json",
@@ -42,7 +60,8 @@ export async function register(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password, display_name: displayName }),
   });
-  if (!resp.ok) throw new Error((await resp.json()).detail ?? "register failed");
+  if (!resp.ok)
+    throw new Error(errorDetail(await resp.json(), "فشل إنشاء الحساب"));
   return (await resp.json()).access_token;
 }
 
@@ -52,7 +71,8 @@ export async function login(email: string, password: string): Promise<string> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
   });
-  if (!resp.ok) throw new Error((await resp.json()).detail ?? "login failed");
+  if (!resp.ok)
+    throw new Error(errorDetail(await resp.json(), "فشل تسجيل الدخول"));
   return (await resp.json()).access_token;
 }
 
@@ -110,7 +130,8 @@ export async function research(
     headers: headers(token),
     body: JSON.stringify({ query, language: "ar" }),
   });
-  if (!resp.ok) throw new Error((await resp.json()).detail ?? "research failed");
+  if (!resp.ok)
+    throw new Error(errorDetail(await resp.json(), "فشل البحث"));
   return resp.json();
 }
 
