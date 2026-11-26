@@ -272,6 +272,30 @@ export async function renameConversation(
     throw new Error(errorDetail(await resp.json(), "فشل إعادة التسمية"));
 }
 
+export interface ExtractedFile {
+  type: string;
+  pages: number | null;
+  characters: number;
+  text: string;
+  truncated: boolean;
+}
+
+export async function extractFile(
+  token: string,
+  file: File
+): Promise<ExtractedFile> {
+  const form = new FormData();
+  form.append("file", file);
+  const resp = await fetch(`${API_URL}/v1/files/extract`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+  if (!resp.ok)
+    throw new Error(errorDetail(await resp.json(), "تعذر قراءة الملف"));
+  return resp.json();
+}
+
 export interface ImageResult {
   url: string;
   provider: string;
@@ -343,7 +367,7 @@ export async function streamChatAbortable(
   h: StreamHandlers,
   attachments: AttachmentIn[] = [],
   signal?: AbortSignal,
-  opts: { regenerate?: boolean; editMessageId?: string } = {}
+  opts: { regenerate?: boolean; editMessageId?: string; titleHint?: string } = {}
 ): Promise<void> {
   const resp = await fetch(`${API_URL}/v1/chat`, {
     method: "POST",
@@ -356,6 +380,7 @@ export async function streamChatAbortable(
       attachments: attachments.length > 0 ? attachments : null,
       regenerate: opts.regenerate || false,
       edit_message_id: opts.editMessageId || null,
+      title_hint: opts.titleHint || null,
     }),
     signal,
   });
