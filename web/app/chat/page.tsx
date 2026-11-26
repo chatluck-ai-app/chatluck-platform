@@ -115,6 +115,7 @@ export default function ChatPage() {
   const [editText, setEditText] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [me, setMe] = useState<MeInfo | null>(null);
   const [meName, setMeName] = useState("");
   const [pwCurrent, setPwCurrent] = useState("");
@@ -786,34 +787,9 @@ export default function ChatPage() {
 
         <div className="messages">
           {isEmpty ? (
-            <div className="welcome">
+            <div className="welcome minimal">
               <div className="logo">✦</div>
-              <h2>أهلاً بيك في Chat Luck</h2>
-              <p>مساعدك الذكي متعدد النماذج — اسأل، ابحث، ترجم، ابرمج، أو أنشئ صوراً.</p>
-              <div className="tools-grid">
-                {TOOLS.map((t) => (
-                  <button key={t.mode} className="tool-card" onClick={() => pickTool(t.mode)}>
-                    <div className="t-icon">{t.icon}</div>
-                    <div className="t-name">{t.name}</div>
-                    <div className="t-desc">{t.desc}</div>
-                  </button>
-                ))}
-              </div>
-              <div className="sugg-label">جرب تسأل:</div>
-              <div className="sugg-grid">
-                {SUGGESTIONS.map((s) => (
-                  <button
-                    key={s}
-                    className="sugg-chip"
-                    onClick={() => {
-                      setInput(s);
-                      setMode("chat");
-                    }}
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
+              <h2>إزايك؟ اسألني أي حاجة</h2>
             </div>
           ) : (
             messages.map((m, idx) => (
@@ -956,6 +932,31 @@ export default function ChatPage() {
             </div>
           )}
           <div className="composer">
+            {toolsOpen && (
+              <div className="tools-pop">
+                {TOOLS.map((t) => (
+                  <button
+                    key={t.mode}
+                    className="tools-pop-item"
+                    onClick={() => {
+                      setToolsOpen(false);
+                      pickTool(t.mode);
+                    }}
+                  >
+                    <span className="t-icon">{t.icon}</span>
+                    <span className="t-name">{t.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <button
+              className="icon-btn"
+              title="الأدوات"
+              onClick={() => setToolsOpen((o) => !o)}
+              disabled={busy}
+            >
+              ✨
+            </button>
             <input
               ref={fileRef}
               type="file"
@@ -986,6 +987,7 @@ export default function ChatPage() {
             )}
             <textarea
               rows={2}
+              autoFocus
               placeholder={listening ? "بسمعك… اتكلم دلوقتي" : MODE_META[mode].placeholder}
               value={input}
               onChange={(e) => setInput(e.target.value)}
