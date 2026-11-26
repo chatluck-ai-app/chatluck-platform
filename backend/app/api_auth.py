@@ -24,7 +24,7 @@ async def register(body: RegisterRequest, request: Request, session=Depends(get_
     )
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="email already registered"
+            status_code=status.HTTP_409_CONFLICT, detail="الإيميل ده مسجل قبل كده — جرب تسجيل الدخول"
         )
     user = User(
         email=body.email.lower(),
@@ -46,7 +46,7 @@ async def login(body: LoginRequest, request: Request, session=Depends(get_sessio
     if user is None or not verify_password(body.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid email or password",
+            detail="الإيميل أو كلمة السر غير صحيحة",
         )
     await audit(session, user.id, "auth.login")
     await session.commit()
@@ -67,7 +67,7 @@ async def update_me(
 ):
     name = (body.get("display_name") or "").strip()
     if not name or len(name) > 120:
-        raise HTTPException(status_code=422, detail="display_name must be 1-120 characters")
+        raise HTTPException(status_code=422, detail="الاسم لازم يكون من حرف لـ 120 حرف")
     user.display_name = name
     await audit(session, user.id, "auth.update_profile")
     await session.commit()
