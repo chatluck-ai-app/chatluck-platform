@@ -1,11 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { login, register } from "../lib/api";
 
 export default function LoginPage() {
   const router = useRouter();
+  useEffect(() => {
+    document.documentElement.dataset.theme =
+      localStorage.getItem("chatluck_theme") || "dark";
+  }, []);
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
