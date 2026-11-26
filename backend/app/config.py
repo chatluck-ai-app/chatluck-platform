@@ -28,6 +28,9 @@ class Settings:
 
     environment: str = "development"
 
+    # Admin dashboard: comma-separated emails allowed to view /v1/admin/stats
+    admin_emails: str = ""
+
     @classmethod
     def from_env(cls) -> "Settings":
         s = cls()
@@ -46,6 +49,7 @@ class Settings:
         s.groq_api_key = os.environ.get("GROQ_API_KEY") or None
         s.openrouter_api_key = os.environ.get("OPENROUTER_API_KEY") or None
         s.environment = os.environ.get("ENVIRONMENT", s.environment)
+        s.admin_emails = os.environ.get("ADMIN_EMAILS", s.admin_emails)
         if s.environment == "production" and s.jwt_secret == cls.jwt_secret:
             raise RuntimeError("JWT_SECRET must be set in production")
         return s
