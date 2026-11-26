@@ -62,6 +62,8 @@ class ChatRequest(BaseModel):
     model: str | None = None  # manual model selection
     stream: bool = False
     attachments: list[AttachmentIn] | None = None
+    regenerate: bool = False  # re-answer the last user message
+    edit_message_id: str | None = None  # replace this user message, drop later ones
 
 
 class ChatResponse(BaseModel):
