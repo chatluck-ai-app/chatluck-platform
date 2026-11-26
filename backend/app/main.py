@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -78,6 +79,7 @@ def create_app(
     from .api_files import router as files_router
     from .api_research import router as research_router
     from .api_admin import router as admin_router
+    from .stickers import router as stickers_router
 
     app.include_router(auth_router)
     app.include_router(chat_router)
@@ -85,6 +87,13 @@ def create_app(
     app.include_router(research_router)
     app.include_router(agent_router)
     app.include_router(admin_router)
+    app.include_router(stickers_router)
+
+    from fastapi.staticfiles import StaticFiles
+
+    stickers_files = Path(__file__).parent / "static" / "stickers" / "files"
+    if stickers_files.is_dir():
+        app.mount("/v1/stickers/files", StaticFiles(directory=stickers_files), name="sticker-files")
 
     @app.get("/healthz")
     async def healthz():
