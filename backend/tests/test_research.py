@@ -17,6 +17,23 @@ DDG_HTML = """
 """
 
 WIKI_JSON = ["q", ["عنوان ويكي"], ["وصف ويكي"], ["https://ar.wikipedia.org/wiki/x"]]
+WIKI_FULLTEXT_JSON = {
+    "query": {
+        "search": [
+            {
+                "title": "عنوان ويكي",
+                "snippet": "وصف ويكي",
+            }
+        ]
+    }
+}
+
+
+def wiki_response(request: httpx.Request) -> httpx.Response:
+    """Full-text API gets the new shape; opensearch gets the legacy array."""
+    if "list=search" in str(request.url):
+        return httpx.Response(200, json=WIKI_FULLTEXT_JSON)
+    return httpx.Response(200, json=WIKI_JSON)
 
 
 def make_client(handler):
@@ -27,7 +44,7 @@ async def test_duckduckgo_parsing():
     def handler(request: httpx.Request) -> httpx.Response:
         if "duckduckgo" in str(request.url):
             return httpx.Response(200, text=DDG_HTML)
-        return httpx.Response(200, json=WIKI_JSON)
+        return wiki_response(request)
 
     results = await search_web("test", client=make_client(handler))
     ddg = [r for r in results if r.source == "duckduckgo"]
@@ -41,12 +58,12 @@ async def test_wikipedia_fallback_when_ddg_fails():
     def handler(request: httpx.Request) -> httpx.Response:
         if "duckduckgo" in str(request.url):
             return httpx.Response(500)
-        return httpx.Response(200, json=WIKI_JSON)
+        return wiki_response(request)
 
     results = await search_web("test", client=make_client(handler))
     assert len(results) == 1
     assert results[0].source == "wikipedia"
-    assert results[0].url == "https://ar.wikipedia.org/wiki/x"
+    assert results[0].url == "https://ar.wikipedia.org/wiki/%D8%B9%D9%86%D9%88%D8%A7%D9%86_%D9%88%D9%8A%D9%83%D9%8A"
 
 
 async def test_research_endpoint_with_mocked_search(client, monkeypatch):
