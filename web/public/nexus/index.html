@@ -277,9 +277,15 @@ async function send() {
       if (state.conversationId) body.conversation_id = state.conversationId;
       if (attach) body.attachments = [{ mime_type: "image/jpeg", data_base64: attach.b64 }];
 
+      // Stall guard: during an API redeploy a request can hang with no bytes
+      // and no close. Abort after 20s without a first token so the user gets
+      // the retry hint instead of an endless typing indicator.
+      const stall = new AbortController();
+      let firstTok = false;
+      const stallTimer = setTimeout(() => { if (!firstTok) stall.abort(); }, 20000);
       const r = await apiFetch("/v1/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body), signal: stall.signal
       });
       if (!r.ok) {
         hideTyping();
@@ -304,6 +310,7 @@ async function send() {
           if (mEvent && mEvent[1] === "meta" && data.conversation_id) {
             state.conversationId = data.conversation_id;
           } else if (mEvent && mEvent[1] === "token" && data.content) {
+            if (!firstTok) { firstTok = true; clearTimeout(stallTimer); }
             if (!span) { hideTyping(); span = addMsg("bot", ""); }
             full += data.content;
             span.textContent = full;
@@ -311,6 +318,7 @@ async function send() {
           }
         }
       }
+      clearTimeout(stallTimer);
       hideTyping();
       if (!full) addMsg("bot", "…");
       else speak(full);
