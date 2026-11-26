@@ -73,6 +73,7 @@ class ChatResponse(BaseModel):
     content: str
     model: str | None
     provider: str | None
+    sources: list[dict] | None = None
 
 
 class ConversationResponse(BaseModel):
