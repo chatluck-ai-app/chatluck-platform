@@ -29,8 +29,17 @@ from .schemas import (
 router = APIRouter(prefix="/v1", tags=["chat"])
 
 SYSTEM_PROMPT = (
-    "You are Chat Luck AI, a helpful multi-model assistant. Answer in the "
-    "user's language; Egyptian Arabic is welcome when the user writes in it."
+    "You are Chat Luck AI, a sharp, warm multi-model assistant. "
+    "Answer in the user's language; if they write Arabic, answer in clear "
+    "Modern Standard Arabic, and Egyptian colloquial is welcome when they "
+    "use it. Give complete, useful answers, never one-liners, unless the "
+    "user explicitly asks for brevity. Structure longer answers with "
+    "Markdown: short intro, ## headings, bullet lists, **bold** for key "
+    "terms, numbered steps for how-tos, and fenced code blocks with the "
+    "language name for code. Explain the reasoning briefly when it helps. "
+    "Give concrete examples. If you are unsure, say so honestly instead of "
+    "inventing facts. End with a short follow-up suggestion only when it "
+    "genuinely helps the user continue."
 )
 
 
@@ -260,6 +269,48 @@ async def list_messages(
         }
         for m in msgs.scalars().all()
     ]
+
+
+@router.delete("/conversations/{conversation_id}", status_code=204)
+async def delete_conversation(
+    conversation_id: str,
+    user: User = Depends(get_current_user),
+    session=Depends(get_session),
+):
+    result = await session.execute(
+        select(Conversation).where(Conversation.id == conversation_id)
+    )
+    conv = result.scalar_one_or_none()
+    if conv is None or conv.user_id != user.id:
+        raise HTTPException(status_code=404, detail="conversation not found")
+    await session.delete(conv)
+    await session.commit()
+
+
+@router.patch("/conversations/{conversation_id}", response_model=ConversationResponse)
+async def rename_conversation(
+    conversation_id: str,
+    body: dict,
+    user: User = Depends(get_current_user),
+    session=Depends(get_session),
+):
+    result = await session.execute(
+        select(Conversation).where(Conversation.id == conversation_id)
+    )
+    conv = result.scalar_one_or_none()
+    if conv is None or conv.user_id != user.id:
+        raise HTTPException(status_code=404, detail="conversation not found")
+    title = (body.get("title") or "").strip()
+    if not title or len(title) > 200:
+        raise HTTPException(status_code=422, detail="title must be 1-200 characters")
+    conv.title = title
+    await session.commit()
+    return ConversationResponse(
+        id=conv.id,
+        title=conv.title,
+        created_at=conv.created_at.isoformat(),
+        updated_at=conv.updated_at.isoformat(),
+    )
 
 
 # ---- memory ------------------------------------------------------------
