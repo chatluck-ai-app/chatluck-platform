@@ -17,8 +17,20 @@ from .schemas import (
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
 
 
+def _client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
 @router.post("/register", response_model=TokenResponse)
 async def register(body: RegisterRequest, request: Request, session=Depends(get_session)):
+    if not request.app.state.register_limiter.allow(f"reg:{_client_ip(request)}"):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="محاولات تسجيل كتير من نفس الجهاز — جرّب بعد ساعة",
+        )
     existing = await session.execute(
         select(User).where(User.email == body.email.lower())
     )
