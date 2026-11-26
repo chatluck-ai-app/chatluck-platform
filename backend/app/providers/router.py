@@ -3,6 +3,7 @@ circuit breaker per provider. Manual selection is honored when possible;
 automatic routing prefers free, healthy providers."""
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
@@ -105,7 +106,19 @@ class ProviderRouter:
         cands = self.candidates(capability, model)
         for provider, m in cands:
             try:
-                text = await provider.chat(messages, model=m.id, **kw)
+                attempt = 0
+                while True:
+                    try:
+                        text = await provider.chat(messages, model=m.id, **kw)
+                        break
+                    except ProviderError as exc:
+                        # Transient failures (503 overload, 429): retry the
+                        # same provider briefly before falling back.
+                        if exc.retryable and attempt < 2:
+                            attempt += 1
+                            await asyncio.sleep(1.0 * attempt)
+                            continue
+                        raise
                 self._record_success(provider.name)
                 return text, provider.name, m.id
             except ProviderError as exc:
@@ -139,15 +152,26 @@ class ProviderRouter:
             return
         for provider, m in cands:
             produced = False
+            attempt = 0
             try:
-                yield {
-                    "type": "meta",
-                    "provider": provider.name,
-                    "model": m.id,
-                }
-                async for token in provider.chat_stream(messages, model=m.id, **kw):
-                    produced = True
-                    yield {"type": "token", "content": token}
+                while True:
+                    try:
+                        yield {
+                            "type": "meta",
+                            "provider": provider.name,
+                            "model": m.id,
+                        }
+                        async for token in provider.chat_stream(messages, model=m.id, **kw):
+                            produced = True
+                            yield {"type": "token", "content": token}
+                        break
+                    except ProviderError as exc:
+                        # Retry transient pre-token failures once or twice.
+                        if exc.retryable and not produced and attempt < 2:
+                            attempt += 1
+                            await asyncio.sleep(1.0 * attempt)
+                            continue
+                        raise
                 self._record_success(provider.name)
                 yield {"type": "done", "provider": provider.name, "model": m.id}
                 return
