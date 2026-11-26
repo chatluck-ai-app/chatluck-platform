@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -17,6 +18,7 @@ from .deps import (
     get_session,
 )
 from .brain import auto_learn, memory_block
+from .execution.search import search_web
 from .models import Conversation, GeneratedImage, MemoryItem, Message, User
 from .providers.base import Message as ProviderMessage
 from .schemas import (
@@ -32,6 +34,46 @@ from .schemas import (
 )
 
 router = APIRouter(prefix="/v1", tags=["chat"])
+
+# Auto-grounding: questions about current facts (news, prices, weather,
+# scores, schedules...) get a quick free web search injected into the prompt
+# and the sources sent to the client. Heuristic-only, so ordinary chat
+# messages pay zero extra latency.
+_NEEDS_SEARCH = re.compile(
+    r"(أخبار|خبر|النهارده|النهاردة|دلوقتي|سعر|أسعار|بكام|نتيجة|ماتش|مباراة|"
+    r"طقس|درجة الحرارة|موعد|آخر|أحدث|عرض سينما|فيلم جديد|مسلسل جديد|"
+    r"news|latest|price|cost|weather|today|tonight|now\b|score|match)",
+    re.IGNORECASE,
+)
+
+
+async def _grounding(message: str) -> tuple[str, list[dict]]:
+    """(prompt block, sources) when the message needs fresh facts, else ("", [])."""
+    if not message or not _NEEDS_SEARCH.search(message):
+        return "", []
+    try:
+        results = await asyncio.wait_for(search_web(message, limit=4), timeout=6.0)
+    except Exception:
+        return "", []
+    if not results:
+        return "", []
+    lines = []
+    sources = []
+    for i, r in enumerate(results, 1):
+        lines.append(f"[{i}] {r.title} — {r.url}\n{r.snippet}")
+        sources.append(
+            {"title": r.title, "url": r.url, "snippet": r.snippet, "source": r.source}
+        )
+    block = (
+        "\n\nنتائج بحث حديثة من الويب لسؤال المستخدم. قواعد صارمة: "
+        "(1) أي معلومة عن أخبار أو أسعار أو وقائع حالية يجب أن تأتي من هذه "
+        "المصادر فقط مع استشهاد [رقم]. "
+        "(2) لو المصادر مش بتغطي سؤاله أو مش مرتبطة بيه، قول بصراحة إن نتائج "
+        "البحث مش كافية، ومتعرضش أحداث أو أخبار من عندك كأنها حالية أبدًا. "
+        "(3) الأسئلة العامة اللي مش محتاجة وقت (زي التعريفات) جاوب عليها عادي "
+        "من معرفتك من غير ما تنسبها للمصادر:\n" + "\n".join(lines)
+    )
+    return block, sources
 
 SYSTEM_PROMPT = (
     "You are Chat Luck AI, a sharp, warm multi-model assistant. "
@@ -172,8 +214,12 @@ async def chat(
         session.add(Message(conversation_id=conv.id, role="user", content=stored))
         await session.flush()
 
+    grounding_block, sources = await _grounding(body.message)
     history = [
-        {"role": "system", "content": SYSTEM_PROMPT + await memory_block(session, user.id)}
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT + await memory_block(session, user.id) + grounding_block,
+        }
     ]
     history += await _load_history(session, conv.id)
     if body.attachments:
@@ -218,6 +264,7 @@ async def chat(
         content=text,
         model=model_id,
         provider=provider_name,
+        sources=sources or None,
     )
 
 
@@ -234,8 +281,12 @@ async def _chat_stream(body: ChatRequest, request: Request, user: User, session)
     # Commit now: the generator writes the assistant reply in a separate
     # session after the response starts, and SQLite allows one writer.
     await session.commit()
+    grounding_block, sources = await _grounding(body.message)
     history = [
-        {"role": "system", "content": SYSTEM_PROMPT + await memory_block(session, user.id)}
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT + await memory_block(session, user.id) + grounding_block,
+        }
     ]
     history += await _load_history(session, conv.id)
     conversation_id = conv.id
@@ -248,6 +299,8 @@ async def _chat_stream(body: ChatRequest, request: Request, user: User, session)
         provider_name = model_id = None
         errored = False
         yield f"event: meta\ndata: {json.dumps({'conversation_id': conversation_id})}\n\n"
+        if sources:
+            yield f"event: sources\ndata: {json.dumps({'sources': sources}, ensure_ascii=False)}\n\n"
         async for event in provider_router.stream(history, model=body.model):
             if event["type"] == "meta":
                 provider_name, model_id = event["provider"], event["model"]
