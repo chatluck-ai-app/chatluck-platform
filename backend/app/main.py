@@ -49,12 +49,14 @@ def create_app(
     from .api_agent import router as agent_router
     from .api_files import router as files_router
     from .api_research import router as research_router
+    from .api_admin import router as admin_router
 
     app.include_router(auth_router)
     app.include_router(chat_router)
     app.include_router(files_router)
     app.include_router(research_router)
     app.include_router(agent_router)
+    app.include_router(admin_router)
 
     @app.get("/healthz")
     async def healthz():
