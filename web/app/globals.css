@@ -1052,3 +1052,6 @@ body {
 .tools-pop-item { display: flex; align-items: center; gap: 10px; background: none; border: none; color: inherit; padding: 9px 10px; border-radius: 8px; cursor: pointer; font-size: .9rem; text-align: start; }
 .tools-pop-item:hover { background: rgba(212,175,55,.12); }
 .tools-pop-item .t-icon { font-size: 1.1rem; }
+
+.tools-pop-item .t-text { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.tools-pop-item .t-desc { font-size: .72rem; color: var(--dim, #9a8f6a); opacity: .85; line-height: 1.4; }
