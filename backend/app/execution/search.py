@@ -2,7 +2,9 @@
 Returns structured results with source URLs; callers must cite them."""
 from __future__ import annotations
 
+import asyncio
 import html
+import logging
 import re
 import urllib.parse
 from dataclasses import dataclass
@@ -193,36 +195,98 @@ def clean_query(text: str) -> str:
     return " ".join(words[:10]) or text.strip()
 
 
+logger = logging.getLogger("chatluck.search")
+
+# Per-engine budget. Datacenter IPs often get silently hung by DDG/Mojeek:
+# without a tight per-call timeout one blocked engine eats the whole search
+# budget and Wikipedia (the reliable path) never runs.
+_ENGINE_TIMEOUT = 2.5
+
+
+async def _engine_chain(query, client, limit):
+    for fetch in (_duckduckgo_html, _duckduckgo_lite, _mojeek):
+        try:
+            results = await fetch(query, client, limit)
+            if results:
+                return results
+        except Exception as exc:
+            logger.warning(
+                "search engine %s failed: %s: %s",
+                fetch.__name__, type(exc).__name__, str(exc)[:120],
+            )
+    return []
+
+
+async def _wiki_chain(query, client, limit, include_wikipedia):
+    if not include_wikipedia:
+        return []
+    for lang in ("ar", "en"):
+        try:
+            wiki = await _wikipedia(query, client, max(2, limit // 2), lang=lang)
+            if wiki:
+                return wiki
+        except Exception as exc:
+            logger.warning(
+                "wikipedia %s search failed: %s: %s",
+                lang, type(exc).__name__, str(exc)[:120],
+            )
+    return []
+
+
+def _cap(results: list[SearchResult], limit: int) -> list[SearchResult]:
+    return results[: limit + max(2, limit // 2)]
+
+
 async def search_web(
     query: str,
     limit: int = 5,
     client: httpx.AsyncClient | None = None,
     include_wikipedia: bool = True,
 ) -> list[SearchResult]:
-    own = client is None
-    client = client or httpx.AsyncClient(timeout=20.0)
     cleaned = clean_query(query)
-    try:
-        results: list[SearchResult] = []
-        for fetch in (_duckduckgo_html, _duckduckgo_lite, _mojeek):
-            try:
-                results = await fetch(cleaned, client, limit)
-                if results:
-                    break
-            except Exception:
+    if client is not None:
+        # Shared-client mode (tests/mocks): sequential, client owns timeouts.
+        results = await _engine_chain(cleaned, client, limit)
+        results += await _wiki_chain(cleaned, client, limit, include_wikipedia)
+        return _cap(results, limit)
+    # Production: Wikipedia and all engines race in parallel with a hard
+    # total budget. A hung engine is cancelled instead of starving Wikipedia.
+    _TOTAL_TIMEOUT = 4.0
+    async with httpx.AsyncClient(timeout=_ENGINE_TIMEOUT) as shared:
+        tasks = [
+            ("duckduckgo_html", asyncio.ensure_future(_duckduckgo_html(cleaned, shared, limit))),
+            ("duckduckgo_lite", asyncio.ensure_future(_duckduckgo_lite(cleaned, shared, limit))),
+            ("mojeek", asyncio.ensure_future(_mojeek(cleaned, shared, limit))),
+            ("wikipedia", asyncio.ensure_future(_wiki_chain(cleaned, shared, limit, include_wikipedia))),
+        ]
+        done, pending = await asyncio.wait(
+            [t for _, t in tasks], timeout=_TOTAL_TIMEOUT
+        )
+        for t in pending:
+            t.cancel()
+        outcomes: dict[str, object] = {}
+        for name, t in tasks:
+            if t in pending:
+                logger.warning("search source %s cancelled after %.1fs budget", name, _TOTAL_TIMEOUT)
+                outcomes[name] = []
                 continue
-        if include_wikipedia:
-            for lang in ("ar", "en"):
-                try:
-                    wiki = await _wikipedia(
-                        cleaned, client, max(2, limit // 2), lang=lang
-                    )
-                    results += wiki
-                    if wiki:
-                        break
-                except Exception:
-                    continue
-        return results[: limit + max(2, limit // 2)]
-    finally:
-        if own:
-            await client.aclose()
+            exc = t.exception()
+            outcomes[name] = exc if exc is not None else t.result()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+    engines: list[SearchResult] = []
+    wiki: list[SearchResult] = []
+    for name, outcome in outcomes.items():
+        if isinstance(outcome, Exception):
+            logger.warning(
+                "search source %s failed: %s: %s",
+                name, type(outcome).__name__, str(outcome)[:120],
+            )
+            continue
+        if not outcome:
+            continue
+        if name == "wikipedia":
+            wiki = outcome
+        elif not engines:
+            engines = outcome
+    return _cap(engines + wiki, limit)
