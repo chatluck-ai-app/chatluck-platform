@@ -14,6 +14,7 @@ import {
   ResearchSource,
   agentCatalog,
   deleteConversation,
+  extractFile,
   friendlyError,
   generateImage,
   isTransientError,
@@ -52,6 +53,18 @@ const SUGGESTIONS = [
   "اقترحلي أفكار مشروع صغير",
 ];
 
+/** Collapse a stored user message that embeds an analyzed document to a
+ * short readable form: the user's request plus a file badge. */
+function displayUserContent(c: string): string {
+  const marker = "طلبي بخصوص الملف: ";
+  if (c.includes("<document>") && c.includes(marker)) {
+    const q = c.split(marker).pop() || c;
+    const name = c.match(/الملف المرفق "([^"]+)"/)?.[1];
+    return `${q}\n📄 ${name ?? "ملف مرفق"}`;
+  }
+  return c;
+}
+
 const MODE_META: Record<Mode, { chip: string; placeholder: string }> = {
   chat: { chip: "", placeholder: "اكتب رسالتك…" },
   research: { chip: "🔎 وضع البحث", placeholder: "اكتب سؤالك وهبحث في الإنترنت وأجيبك بالمصادر…" },
@@ -75,6 +88,10 @@ export default function ChatPage() {
   const [attachments, setAttachments] = useState<
     { name: string; mime_type: string; data_base64: string }[]
   >([]);
+  const [docAttachment, setDocAttachment] = useState<
+    | { name: string; type: string; characters: number; truncated: boolean; text: string }
+    | null
+  >(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
@@ -136,7 +153,8 @@ export default function ChatPage() {
     if (!files) return;
     Array.from(files).slice(0, 3).forEach((f) => {
       if (!/^image\/(png|jpeg|webp|gif)$/.test(f.type)) {
-        setStatus("صيغة الصورة غير مدعومة (png, jpeg, webp, gif فقط)");
+        // Not an image: treat it as a document for analysis.
+        onPickDocument(f);
         return;
       }
       if (f.size > 10 * 1024 * 1024) {
@@ -169,6 +187,32 @@ export default function ChatPage() {
     return () => clearTimeout(t);
   }, [token, searchQ]);
 
+  async function onPickDocument(f: File) {
+    if (!token) return;
+    if (f.size > 15 * 1024 * 1024) {
+      setStatus("الملف أكبر من 15 ميجا");
+      return;
+    }
+    setStatus(`جاري قراءة الملف ${f.name}…`);
+    try {
+      const r = await extractFile(token, f);
+      if (!r.text.trim()) {
+        setStatus("الملف فاضي أو مفيهوش نص قابل للقراءة");
+        return;
+      }
+      setDocAttachment({
+        name: f.name,
+        type: r.type,
+        characters: r.characters,
+        truncated: r.truncated,
+        text: r.text,
+      });
+      setStatus("");
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "تعذر قراءة الملف");
+    }
+  }
+
   function appendMessage(msg: UiMessage) {
     setMessages((ms) => [...ms, msg]);
   }
@@ -193,7 +237,7 @@ export default function ChatPage() {
    * transient provider overload (503/high demand). */
   async function runStream(
     finalText: string,
-    opts: { regenerate?: boolean; editMessageId?: string } = {},
+    opts: { regenerate?: boolean; editMessageId?: string; titleHint?: string } = {},
     atts: AttachmentIn[] = []
   ) {
     if (!token) return;
@@ -295,8 +339,11 @@ export default function ChatPage() {
   }
 
   async function send() {
-    if (!token || !input.trim() || busy) return;
-    const text = input.trim();
+    if (!token || busy) return;
+    if (!input.trim() && !docAttachment) return;
+    const hadDoc = docAttachment !== null;
+    const text =
+      input.trim() || "لخص الملف المرفق واستخرج أهم النقاط والمعلومات فيه.";
     setInput("");
     setStatus("");
 
@@ -304,6 +351,14 @@ export default function ChatPage() {
     if (mode === "image") return sendImage(text);
 
     let finalText = text;
+    if (docAttachment) {
+      const d = docAttachment;
+      finalText =
+        `الملف المرفق "${d.name}" (${d.type}${d.truncated ? "، مقتطع من الأصل" : ""}):\n\n` +
+        `<document>\n${d.text}\n</document>\n\n` +
+        `طلبي بخصوص الملف: ${text}`;
+      setDocAttachment(null);
+    }
     if (mode === "translate") {
       finalText = `ترجم النص التالي ترجمة احترافية تحفظ المعنى والسياق (وليست حرفية)، وحدد اللغة الهدف من طلبي أو ترجم للإنجليزية إن لم أحدد:\n\n${text}`;
     } else if (mode === "code") {
@@ -318,9 +373,12 @@ export default function ChatPage() {
     appendMessage({
       id: `local-${Date.now()}`,
       role: "user",
-      content: text + (atts.length ? `\n[${atts.length} صورة مرفقة]` : ""),
+      content:
+        text +
+        (atts.length ? `\n[${atts.length} صورة مرفقة]` : "") +
+        (hadDoc ? `\n📄 ملف مرفق` : ""),
     });
-    await runStream(finalText, {}, atts);
+    await runStream(finalText, { titleHint: text }, atts);
   }
 
   async function sendResearch(q: string) {
@@ -608,7 +666,7 @@ export default function ChatPage() {
                       </ReactMarkdown>
                     </div>
                   ) : (
-                    m.content
+                    displayUserContent(m.content)
                   )}
                   {m.imageUrl && (
                     <a href={m.imageUrl} target="_blank" rel="noreferrer">
@@ -659,7 +717,7 @@ export default function ChatPage() {
                         <button
                           onClick={() => {
                             setEditingId(m.id);
-                            setEditText(m.content);
+                            setEditText(displayUserContent(m.content));
                           }}
                         >
                           تعديل
@@ -682,8 +740,15 @@ export default function ChatPage() {
               </span>
             </div>
           )}
-          {attachments.length > 0 && (
+          {(attachments.length > 0 || docAttachment) && (
             <div className="attach-bar">
+              {docAttachment && (
+                <span className="attach-chip doc-chip">
+                  📄 {docAttachment.name} ({docAttachment.type}
+                  {docAttachment.truncated ? "، مقتطع" : ""})
+                  <button onClick={() => setDocAttachment(null)}>×</button>
+                </span>
+              )}
               {attachments.map((a, i) => (
                 <span key={i} className="attach-chip">
                   {a.name}
@@ -698,7 +763,7 @@ export default function ChatPage() {
             <input
               ref={fileRef}
               type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif"
+              accept="image/png,image/jpeg,image/webp,image/gif,.pdf,.docx,.xlsx,.csv,.txt,.md,.json"
               multiple
               style={{ display: "none" }}
               onChange={onPickImage}
@@ -734,7 +799,7 @@ export default function ChatPage() {
                 ■
               </button>
             ) : (
-              <button className="send-btn" onClick={send} disabled={busy || !input.trim()} title="إرسال">
+              <button className="send-btn" onClick={send} disabled={busy || (!input.trim() && !docAttachment)} title="إرسال">
                 ➤
               </button>
             )}
