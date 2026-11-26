@@ -303,6 +303,57 @@ async def search_conversations(
     return matches
 
 
+# --- image generation robustness -------------------------------------------
+# Pollinations' anonymous tier sometimes answers HTTP 200 with a "busy"
+# placeholder image (always 1024x576) instead of the requested picture. The
+# client cannot detect that cross-origin, so the backend fetches each
+# candidate URL, checks the real pixel dimensions, and retries with a fresh
+# seed (Pollinations caches per URL, so the seed must change) until the
+# returned image actually matches what the user asked for.
+
+_IMG_RETRY_ATTEMPTS = 4
+_IMG_RETRY_SLEEP = 15.0
+
+
+def _image_dims(data: bytes) -> tuple[int, int] | None:
+    """(width, height) from PNG or JPEG headers, stdlib only."""
+    import struct
+
+    if data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) >= 24:
+        return struct.unpack(">II", data[16:24])
+    if data[:2] == b"\xff\xd8":
+        i = 2
+        while i + 9 < len(data):
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            marker = data[i + 1]
+            if marker in (0xC0, 0xC1, 0xC2):
+                h, w = struct.unpack(">HH", data[i + 5 : i + 9])
+                return w, h
+            if marker in (0xD8, 0xD9) or 0xD0 <= marker <= 0xD7:
+                i += 2
+                continue
+            seg = struct.unpack(">H", data[i + 2 : i + 4])[0]
+            i += 2 + seg
+    return None
+
+
+async def _fetch_image_dims(url: str) -> tuple[int, int] | None:
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+            resp = await client.get(url)
+        if resp.status_code != 200:
+            return None
+        if not (resp.headers.get("content-type") or "").startswith("image/"):
+            return None
+        return _image_dims(resp.content)
+    except Exception:
+        return None
+
+
 IMAGE_STYLES = {
     "realistic": "ultra realistic photograph, detailed, ",
     "anime": "anime style illustration, ",
@@ -329,18 +380,30 @@ async def generate_image(
         raise HTTPException(status_code=422, detail="invalid dimensions")
     style = (body.get("style") or "").strip()
     styled_prompt = IMAGE_STYLES.get(style, "") + prompt
+    import asyncio
     import random
 
     router = get_router(request)
-    try:
-        url, provider_name, model_id = await router.generate_image(
-            styled_prompt, width=width, height=height, seed=random.randint(1, 10**9)
-        )
-    except Exception as exc:
+    url = provider_name = model_id = None
+    for attempt in range(_IMG_RETRY_ATTEMPTS):
+        try:
+            url, provider_name, model_id = await router.generate_image(
+                styled_prompt, width=width, height=height, seed=random.randint(1, 10**9)
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=friendly_error(str(exc)),
+            ) from exc
+        if await _fetch_image_dims(url) == (width, height):
+            break
+        if attempt + 1 < _IMG_RETRY_ATTEMPTS:
+            await asyncio.sleep(_IMG_RETRY_SLEEP)
+    else:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=friendly_error(str(exc)),
-        ) from exc
+            detail="خدمة إنشاء الصور مشغولة دلوقتي — جرب تاني بعد دقيقة.",
+        )
     row = GeneratedImage(
         user_id=user.id,
         prompt=prompt,
