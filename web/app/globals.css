@@ -1042,3 +1042,13 @@ body {
 .admin-table { width: 100%; border-collapse: collapse; font-size: .9rem; }
 .admin-table th, .admin-table td { border: 1px solid var(--border, #333); padding: 8px 10px; text-align: right; }
 .admin-table th { background: var(--panel, #14141c); }
+
+/* ===== ChatGPT-style minimal empty state + tools popover ===== */
+.welcome.minimal { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 10px; }
+.welcome.minimal .logo { font-size: 40px; color: var(--gold, #d4af37); }
+.welcome.minimal h2 { font-size: 1.25rem; font-weight: 600; }
+.composer { position: relative; }
+.tools-pop { position: absolute; bottom: calc(100% + 8px); inset-inline-start: 0; background: var(--panel, #14141c); border: 1px solid var(--border, #333); border-radius: 12px; padding: 6px; display: flex; flex-direction: column; min-width: 210px; z-index: 50; box-shadow: 0 8px 30px rgba(0,0,0,.45); }
+.tools-pop-item { display: flex; align-items: center; gap: 10px; background: none; border: none; color: inherit; padding: 9px 10px; border-radius: 8px; cursor: pointer; font-size: .9rem; text-align: start; }
+.tools-pop-item:hover { background: rgba(212,175,55,.12); }
+.tools-pop-item .t-icon { font-size: 1.1rem; }
