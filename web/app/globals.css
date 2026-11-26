@@ -1012,3 +1012,14 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---------- voice ---------- */
+.mic-btn.listening {
+  background: var(--gold);
+  color: #1a1405;
+  animation: mic-pulse 1.2s ease-in-out infinite;
+}
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(212, 175, 55, 0.5); }
+  50% { box-shadow: 0 0 0 8px rgba(212, 175, 55, 0); }
+}
