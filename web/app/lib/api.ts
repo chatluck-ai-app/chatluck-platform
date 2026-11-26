@@ -198,6 +198,7 @@ export interface StreamHandlers {
   onFallback?: (from: string, reason: string) => void;
   onError?: (error: string) => void;
   onDone?: (provider: string, model: string) => void;
+  onSources?: (sources: ResearchSource[]) => void;
 }
 
 export async function streamChat(
@@ -550,6 +551,8 @@ export async function streamChatAbortable(
           h.onFallback?.(data.from, data.reason);
         } else if (eventName === "error") {
           h.onError?.(data.error);
+        } else if (eventName === "sources") {
+          h.onSources?.(data.sources || []);
         } else if (eventName === "done") {
           h.onDone?.(data.provider, data.model);
         }
