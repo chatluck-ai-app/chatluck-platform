@@ -24,6 +24,13 @@ class AllProvidersDownError(Exception):
         super().__init__(f"all providers failed -> {detail}")
 
 
+# Latency guards: if a provider stalls before producing anything, fail fast
+# and retry/fallback instead of letting the user wait ~a minute on a hung
+# request (Gemini "high demand" can hold a stream open with no bytes).
+_FIRST_TOKEN_TIMEOUT = 15.0
+_NEXT_TOKEN_TIMEOUT = 30.0
+
+
 class ProviderRouter:
     def __init__(
         self,
@@ -161,9 +168,36 @@ class ProviderRouter:
                             "provider": provider.name,
                             "model": m.id,
                         }
-                        async for token in provider.chat_stream(messages, model=m.id, **kw):
+                        tokens = provider.chat_stream(
+                            messages, model=m.id, **kw
+                        ).__aiter__()
+                        while True:
+                            try:
+                                token = await asyncio.wait_for(
+                                    tokens.__anext__(),
+                                    timeout=_FIRST_TOKEN_TIMEOUT
+                                    if not produced
+                                    else _NEXT_TOKEN_TIMEOUT,
+                                )
+                            except StopAsyncIteration:
+                                break
+                            except asyncio.TimeoutError:
+                                if produced:
+                                    # Mid-stream stall: keep the partial reply.
+                                    break
+                                raise ProviderError(
+                                    "provider stalled before first token",
+                                    provider.name,
+                                    retryable=True,
+                                )
                             produced = True
                             yield {"type": "token", "content": token}
+                        if not produced:
+                            raise ProviderError(
+                                "provider returned an empty stream",
+                                provider.name,
+                                retryable=True,
+                            )
                         break
                     except ProviderError as exc:
                         # Retry transient pre-token failures once or twice.
