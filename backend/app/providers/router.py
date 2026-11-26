@@ -27,7 +27,7 @@ class AllProvidersDownError(Exception):
 # Latency guards: if a provider stalls before producing anything, fail fast
 # and retry/fallback instead of letting the user wait ~a minute on a hung
 # request (Gemini "high demand" can hold a stream open with no bytes).
-_FIRST_TOKEN_TIMEOUT = 15.0
+_FIRST_TOKEN_TIMEOUT = 10.0
 _NEXT_TOKEN_TIMEOUT = 30.0
 
 
