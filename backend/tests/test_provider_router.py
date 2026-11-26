@@ -112,3 +112,70 @@ async def test_retryable_failure_is_retried_before_fallback():
     assert provider == "flaky"
     assert text == flaky.reply
     assert flaky.calls == 2  # one failure + one successful retry
+
+
+class HangingProvider(FakeProvider):
+    """Stalls without yielding. hang_times controls how many calls hang."""
+
+    def __init__(self, *a, hang_times=999, hang=60.0, **kw):
+        super().__init__(*a, **kw)
+        self.hang_times = hang_times
+        self.hang = hang
+
+    async def chat_stream(self, messages, model=None, **kw):
+        self.calls += 1
+        if self.calls <= self.hang_times:
+            import asyncio as _a
+
+            await _a.sleep(self.hang)
+        for token in ["ok"]:
+            yield token
+
+
+class StallMidProvider(FakeProvider):
+    """Yields one token, then stalls forever."""
+
+    async def chat_stream(self, messages, model=None, **kw):
+        self.calls += 1
+        yield "partial"
+        import asyncio as _a
+
+        await _a.sleep(60)
+
+
+@pytest.fixture()
+def fast_timeouts(monkeypatch):
+    import app.providers.router as r
+
+    monkeypatch.setattr(r, "_FIRST_TOKEN_TIMEOUT", 0.05)
+    monkeypatch.setattr(r, "_NEXT_TOKEN_TIMEOUT", 0.05)
+
+
+async def test_stall_before_first_token_retries_and_recovers(fast_timeouts):
+    p = HangingProvider(name="hang", hang_times=1)
+    router = make_router(p)
+    events = [e async for e in router.stream([{"role": "user", "content": "hi"}])]
+    tokens = [e["content"] for e in events if e["type"] == "token"]
+    assert tokens == ["ok"]
+    assert p.calls == 2  # hung once, retried, produced
+
+
+async def test_permanent_stall_falls_back(fast_timeouts):
+    bad = HangingProvider(name="hang")
+    good = FakeProvider(name="good")
+    router = make_router(bad, good)
+    events = [e async for e in router.stream([{"role": "user", "content": "hi"}])]
+    kinds = [e["type"] for e in events]
+    assert "fallback" in kinds
+    assert "token" in kinds
+    assert kinds[-1] == "done"
+
+
+async def test_midstream_stall_keeps_partial_reply(fast_timeouts):
+    p = StallMidProvider(name="mid")
+    router = make_router(p)
+    events = [e async for e in router.stream([{"role": "user", "content": "hi"}])]
+    tokens = [e["content"] for e in events if e["type"] == "token"]
+    assert tokens == ["partial"]
+    assert events[-1]["type"] == "done"
+    assert p.calls == 1  # no retry after tokens were produced
