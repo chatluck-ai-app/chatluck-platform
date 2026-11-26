@@ -13,19 +13,27 @@ import {
   ModelInfo,
   ResearchSource,
   agentCatalog,
+  MeInfo,
+  MemoryItem,
+  addMemory,
+  changePassword,
   deleteConversation,
+  deleteMemory,
   extractFile,
   friendlyError,
+  getMe,
   generateImage,
   isTransientError,
   listConversations,
   listMessages,
   listModels,
+  listMemory,
   renameConversation,
   research,
   runAgent,
   searchConversations,
   streamChatAbortable,
+  updateMe,
 } from "../lib/api";
 
 type Mode = "chat" | "research" | "image" | "translate" | "code";
@@ -102,6 +110,85 @@ export default function ChatPage() {
   const [searchResults, setSearchResults] = useState<ConversationMatch[] | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [me, setMe] = useState<MeInfo | null>(null);
+  const [meName, setMeName] = useState("");
+  const [pwCurrent, setPwCurrent] = useState("");
+  const [pwNew, setPwNew] = useState("");
+  const [settingsMsg, setSettingsMsg] = useState("");
+  const [memory, setMemory] = useState<MemoryItem[]>([]);
+  const [memKind, setMemKind] = useState("preference");
+  const [memContent, setMemContent] = useState("");
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+
+  useEffect(() => {
+    const saved = (localStorage.getItem("chatluck_theme") as "dark" | "light") || "dark";
+    setTheme(saved);
+    document.documentElement.dataset.theme = saved;
+  }, []);
+
+  function toggleTheme() {
+    const next = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem("chatluck_theme", next);
+  }
+
+  async function openSettings() {
+    if (!token) return;
+    setSettingsOpen(true);
+    setSettingsMsg("");
+    getMe(token)
+      .then((m) => {
+        setMe(m);
+        setMeName(m.display_name);
+      })
+      .catch(() => {});
+    listMemory(token).then(setMemory).catch(() => {});
+  }
+
+  async function saveProfile() {
+    if (!token || !meName.trim()) return;
+    try {
+      await updateMe(token, meName.trim());
+      setSettingsMsg("تم حفظ الاسم ✓");
+    } catch (e) {
+      setSettingsMsg(e instanceof Error ? e.message : "فشل الحفظ");
+    }
+  }
+
+  async function savePassword() {
+    if (!token || !pwCurrent || !pwNew) return;
+    try {
+      await changePassword(token, pwCurrent, pwNew);
+      setPwCurrent("");
+      setPwNew("");
+      setSettingsMsg("تم تغيير كلمة السر ✓");
+    } catch (e) {
+      setSettingsMsg(e instanceof Error ? e.message : "فشل التغيير");
+    }
+  }
+
+  async function addMemoryItem() {
+    if (!token || !memContent.trim()) return;
+    try {
+      await addMemory(token, memKind, memContent.trim());
+      setMemContent("");
+      setMemory(await listMemory(token));
+    } catch (e) {
+      setSettingsMsg(e instanceof Error ? e.message : "فشل الحفظ");
+    }
+  }
+
+  async function removeMemoryItem(id: string) {
+    if (!token) return;
+    try {
+      await deleteMemory(token, id);
+      setMemory((ms) => ms.filter((m) => m.id !== id));
+    } catch {
+      setSettingsMsg("فشل حذف العنصر");
+    }
+  }
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -586,6 +673,9 @@ export default function ChatPage() {
           </div>
         ))}
         <div style={{ flex: 1 }} />
+        <button className="settings-btn" onClick={openSettings}>
+          ⚙ الإعدادات
+        </button>
         <button className="logout-btn" onClick={logout}>
           تسجيل الخروج
         </button>
@@ -806,6 +896,98 @@ export default function ChatPage() {
           </div>
         </div>
       </main>
+
+      {settingsOpen && (
+        <div className="modal-back" onClick={() => setSettingsOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <button className="close-x" onClick={() => setSettingsOpen(false)}>
+              ×
+            </button>
+            <h3>الإعدادات</h3>
+            {settingsMsg && <div className="settings-msg">{settingsMsg}</div>}
+
+            <div className="settings-section">
+              <h4>الملف الشخصي</h4>
+              <div className="m-sub">{me?.email || ""}</div>
+              <div className="settings-row">
+                <input
+                  className="settings-input"
+                  placeholder="اسمك"
+                  value={meName}
+                  onChange={(e) => setMeName(e.target.value)}
+                />
+                <button className="msg-actions-btn" onClick={saveProfile} disabled={!meName.trim()}>
+                  حفظ
+                </button>
+              </div>
+            </div>
+
+            <div className="settings-section">
+              <h4>تغيير كلمة السر</h4>
+              <input
+                className="settings-input"
+                type="password"
+                placeholder="كلمة السر الحالية"
+                value={pwCurrent}
+                onChange={(e) => setPwCurrent(e.target.value)}
+              />
+              <div className="settings-row">
+                <input
+                  className="settings-input"
+                  type="password"
+                  placeholder="كلمة السر الجديدة (8 أحرف على الأقل)"
+                  value={pwNew}
+                  onChange={(e) => setPwNew(e.target.value)}
+                />
+                <button className="msg-actions-btn" onClick={savePassword} disabled={!pwCurrent || pwNew.length < 8}>
+                  تغيير
+                </button>
+              </div>
+            </div>
+
+            <div className="settings-section">
+              <h4>المظهر</h4>
+              <button className="msg-actions-btn" onClick={toggleTheme}>
+                {theme === "dark" ? "☀ الوضع الفاتح" : "🌙 الوضع الداكن"}
+              </button>
+            </div>
+
+            <div className="settings-section">
+              <h4>ذاكرة المساعد</h4>
+              <div className="m-sub">
+                معلومات يتذكرها المساعد عنك لتخصيص إجاباته.
+              </div>
+              {memory.length === 0 && <div className="m-sub">لا توجد عناصر محفوظة بعد.</div>}
+              {memory.map((m) => (
+                <div key={m.id} className="memory-item">
+                  <span className="memory-kind">
+                    {m.kind === "preference" ? "تفضيل" : m.kind === "project" ? "مشروع" : m.kind === "task_history" ? "سجل" : "ملف"}
+                  </span>
+                  <span className="memory-content">{m.content}</span>
+                  <button className="memory-del" onClick={() => removeMemoryItem(m.id)}>
+                    ×
+                  </button>
+                </div>
+              ))}
+              <div className="settings-row" style={{ marginTop: 10 }}>
+                <select className="settings-input" style={{ maxWidth: 110 }} value={memKind} onChange={(e) => setMemKind(e.target.value)}>
+                  <option value="preference">تفضيل</option>
+                  <option value="project">مشروع</option>
+                </select>
+                <input
+                  className="settings-input"
+                  placeholder="مثال: أفضّل الإجابات المختصرة"
+                  value={memContent}
+                  onChange={(e) => setMemContent(e.target.value)}
+                />
+                <button className="msg-actions-btn" onClick={addMemoryItem} disabled={!memContent.trim()}>
+                  إضافة
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {agentsOpen && (
         <div className="modal-back" onClick={() => setAgentsOpen(false)}>
