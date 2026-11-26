@@ -31,38 +31,41 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="auth-card">
-      <h1>Chat Luck AI</h1>
-      {mode === "register" && (
+    <div className="auth-wrap">
+      <div className="auth-card">
+        <h1>Chat Luck AI</h1>
+        <div className="sub">مساعدك الذكي متعدد النماذج</div>
+        {mode === "register" && (
+          <input
+            placeholder="الاسم"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        )}
         <input
-          placeholder="الاسم"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
+          placeholder="البريد الإلكتروني"
+          type="email"
+          dir="ltr"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
         />
-      )}
-      <input
-        placeholder="البريد الإلكتروني"
-        type="email"
-        dir="ltr"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-      />
-      <input
-        placeholder="كلمة السر"
-        type="password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && submit()}
-      />
-      {error && <div className="error">{error}</div>}
-      <button className="btn" onClick={submit} disabled={busy}>
-        {mode === "login" ? "دخول" : "إنشاء حساب"}
-      </button>
-      <div
-        className="switch-link"
-        onClick={() => setMode(mode === "login" ? "register" : "login")}
-      >
-        {mode === "login" ? "ماعندكش حساب؟ سجل دلوقتي" : "عندك حساب؟ ادخل"}
+        <input
+          placeholder="كلمة السر"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && submit()}
+        />
+        <div className="error">{error}</div>
+        <button className="primary" onClick={submit} disabled={busy}>
+          {busy ? "…" : mode === "login" ? "دخول" : "إنشاء حساب"}
+        </button>
+        <button
+          className="switch"
+          onClick={() => setMode(mode === "login" ? "register" : "login")}
+        >
+          {mode === "login" ? "ماعندكش حساب؟ سجل دلوقتي" : "عندك حساب؟ ادخل"}
+        </button>
       </div>
     </div>
   );
