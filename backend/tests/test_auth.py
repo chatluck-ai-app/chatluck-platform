@@ -59,3 +59,24 @@ async def test_short_password_rejected(client):
         json={"email": "x@example.com", "password": "short"},
     )
     assert resp.status_code == 422
+
+
+async def test_register_with_invisible_keyboard_chars(client):
+    """Arabic keyboard layouts insert RIGHT-TO-LEFT MARK (U+200F) and similar
+    format characters into emails; registration must clean and accept them."""
+    resp = await client.post(
+        "/v1/auth/register",
+        json={
+            "email": "keyboard-user@gmail.com\u200f",
+            "password": "secret123",
+            "display_name": "مستخدم",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["access_token"]
+    # and login with the clean form of the same address works
+    resp = await client.post(
+        "/v1/auth/login",
+        json={"email": "Keyboard-User@gmail.com", "password": "secret123"},
+    )
+    assert resp.status_code == 200, resp.text
