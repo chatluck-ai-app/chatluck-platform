@@ -179,6 +179,26 @@ export default function ChatPage() {
       .trim();
   }
 
+  const [autoSpeak, setAutoSpeak] = useState(
+    () => typeof window !== "undefined" && localStorage.getItem("chatluck_autospeak") === "1"
+  );
+
+  function speakContent(content: string, id: string) {
+    const synth = window.speechSynthesis;
+    if (!synth) return;
+    synth.cancel();
+    const u = new SpeechSynthesisUtterance(stripMarkdown(content).slice(0, 4000));
+    u.lang = "ar-EG";
+    const voices = synth.getVoices();
+    const ar = voices.find((v) => v.lang && v.lang.toLowerCase().startsWith("ar"));
+    if (ar) u.voice = ar;
+    u.rate = 1;
+    u.onend = () => setSpeakingId(null);
+    u.onerror = () => setSpeakingId(null);
+    synth.speak(u);
+    setSpeakingId(id);
+  }
+
   function toggleSpeak(m: UiMessage) {
     const synth = window.speechSynthesis;
     if (!synth) return;
@@ -187,14 +207,74 @@ export default function ChatPage() {
       setSpeakingId(null);
       return;
     }
-    synth.cancel();
-    const u = new SpeechSynthesisUtterance(stripMarkdown(m.content).slice(0, 4000));
-    u.lang = "ar-SA";
-    u.rate = 1;
-    u.onend = () => setSpeakingId(null);
-    u.onerror = () => setSpeakingId(null);
-    synth.speak(u);
-    setSpeakingId(m.id);
+    speakContent(m.content, m.id);
+  }
+
+  function toggleAutoSpeak() {
+    const next = !autoSpeak;
+    setAutoSpeak(next);
+    localStorage.setItem("chatluck_autospeak", next ? "1" : "0");
+    if (!next && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      setSpeakingId(null);
+    }
+  }
+
+  function convTitle(): string {
+    return conversations.find((c) => c.id === activeConv)?.title || "محادثة شات لاك";
+  }
+
+  function escapeHtml(t: string): string {
+    return t
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function exportPrint() {
+    const w = window.open("", "_blank");
+    if (!w) { setStatus("المتصفح منع النافذة المنبثقة — اسمح بيها وحاول تاني"); return; }
+    const rows = messages
+      .map(
+        (m) =>
+          `<div class="msg ${m.role}"><div class="who">${m.role === "user" ? "أنت" : "شات لاك"}</div><div class="body">${escapeHtml(m.content).replace(/\n/g, "<br>")}</div></div>`
+      )
+      .join("");
+    w.document.write(`<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${escapeHtml(convTitle())}</title>
+<style>
+  body { font-family: "Segoe UI", Tahoma, Arial, sans-serif; max-width: 760px; margin: 24px auto; padding: 0 16px; color: #111; }
+  h1 { font-size: 20px; border-bottom: 2px solid #c9a227; padding-bottom: 8px; }
+  .msg { margin: 14px 0; }
+  .who { font-weight: 700; color: #8a6d1a; margin-bottom: 4px; }
+  .assistant .who { color: #111; }
+  .body { line-height: 1.9; white-space: pre-wrap; }
+  .meta { color: #888; font-size: 12px; margin-top: 24px; border-top: 1px solid #ddd; padding-top: 8px; }
+</style></head><body>
+<h1>${escapeHtml(convTitle())}</h1>
+${rows}
+<div class="meta">صدرت من Chat Luck AI — ${new Date().toLocaleString("ar-EG")}</div>
+</body></html>`);
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 400);
+  }
+
+  function exportMarkdown() {
+    const md =
+      `# ${convTitle()}
+
+` +
+      messages
+        .map((m) => (m.role === "user" ? "**أنت:** " : "**شات لاك:** ") + m.content)
+        .join("\n\n---\n\n") +
+      `\n\n---\n_صدرت من Chat Luck AI — ${new Date().toLocaleString("ar-EG")}_\n`;
+    const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${convTitle().replace(/[\\/:*?"<>|]/g, "-").slice(0, 60) || "chat"}.md`;
+    a.click();
+    URL.revokeObjectURL(a.href);
   }
 
   useEffect(() => {
@@ -470,6 +550,15 @@ export default function ChatPage() {
               },
               onDone: (provider, m) => {
                 patchLastMessage({ provider, model: m, streaming: false });
+                if (autoSpeak) {
+                  setMessages((ms) => {
+                    const last = ms[ms.length - 1];
+                    if (last && last.role === "assistant" && last.content) {
+                      speakContent(last.content, last.id);
+                    }
+                    return ms;
+                  });
+                }
               },
             },
             atts,
@@ -816,6 +905,16 @@ export default function ChatPage() {
             ))}
           </select>
           {status && <span className="status">{status}</span>}
+          {messages.length > 0 && (
+            <span className="topbar-actions">
+              <button className="icon-btn" title="تصدير PDF (طباعة)" onClick={exportPrint}>
+                🖨️
+              </button>
+              <button className="icon-btn" title="تنزيل Markdown" onClick={exportMarkdown}>
+                ⬇️
+              </button>
+            </span>
+          )}
         </div>
 
         <div className="messages">
@@ -1147,6 +1246,12 @@ export default function ChatPage() {
                 <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
                   <input type="checkbox" checked={memoryEnabled} onChange={toggleMemoryEnabled} />
                   <span>الذاكرة التلقائية (يتعلم من محادثاتك ويستخدمها في الردود)</span>
+                </label>
+              </div>
+              <div className="settings-row" style={{ marginTop: 8 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                  <input type="checkbox" checked={autoSpeak} onChange={toggleAutoSpeak} />
+                  <span>قراءة الردود صوتيًا أول ما تخلص (صوت المتصفح)</span>
                 </label>
               </div>
               {memory.length === 0 && <div className="m-sub">لا توجد عناصر محفوظة بعد.</div>}
