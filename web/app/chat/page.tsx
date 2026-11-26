@@ -9,17 +9,21 @@ import {
   AttachmentIn,
   ChatMessage,
   Conversation,
+  ConversationMatch,
   ModelInfo,
   ResearchSource,
   agentCatalog,
   deleteConversation,
+  friendlyError,
   generateImage,
+  isTransientError,
   listConversations,
   listMessages,
   listModels,
   renameConversation,
   research,
   runAgent,
+  searchConversations,
   streamChatAbortable,
 } from "../lib/api";
 
@@ -77,6 +81,10 @@ export default function ChatPage() {
   const [agentTask, setAgentTask] = useState("");
   const [agentBusy, setAgentBusy] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [searchQ, setSearchQ] = useState("");
+  const [searchResults, setSearchResults] = useState<ConversationMatch[] | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -148,6 +156,19 @@ export default function ChatPage() {
     e.target.value = "";
   }
 
+  useEffect(() => {
+    if (!token || !searchQ.trim()) {
+      setSearchResults(null);
+      return;
+    }
+    const t = setTimeout(() => {
+      searchConversations(token, searchQ.trim())
+        .then(setSearchResults)
+        .catch(() => setSearchResults([]));
+    }, 350);
+    return () => clearTimeout(t);
+  }, [token, searchQ]);
+
   function appendMessage(msg: UiMessage) {
     setMessages((ms) => [...ms, msg]);
   }
@@ -165,6 +186,112 @@ export default function ChatPage() {
     const convs = await listConversations(t);
     setConversations(convs);
     if (wasNew && convs.length > 0) setActiveConv(convs[0].id);
+  }
+
+  /** Stream an assistant reply for the current conversation. Shared by
+   * send, regenerate and edit+resend. Retries once automatically on
+   * transient provider overload (503/high demand). */
+  async function runStream(
+    finalText: string,
+    opts: { regenerate?: boolean; editMessageId?: string } = {},
+    atts: AttachmentIn[] = []
+  ) {
+    if (!token) return;
+    const wasNew = !activeConv;
+    setBusy(true);
+    try {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const assistantMsg: UiMessage = {
+          id: `local-a-${Date.now()}`,
+          role: "assistant",
+          content: "",
+          streaming: true,
+        };
+        setMessages((ms) => [...ms, assistantMsg]);
+        const controller = new AbortController();
+        abortRef.current = controller;
+        let failed: string | null = null;
+        let threw: string | null = null;
+        try {
+          await streamChatAbortable(
+            token,
+            finalText,
+            activeConv,
+            model || null,
+            {
+              onToken: (content) => {
+                setMessages((ms) => {
+                  const copy = [...ms];
+                  const last = copy[copy.length - 1];
+                  copy[copy.length - 1] = { ...last, content: last.content + content };
+                  return copy;
+                });
+              },
+              onFallback: (from) => setStatus(`المزود ${from} لم يستجب، جاري التبديل…`),
+              onError: (error) => {
+                failed = error;
+              },
+              onDone: (provider, m) => {
+                patchLastMessage({ provider, model: m, streaming: false });
+              },
+            },
+            atts,
+            controller.signal,
+            opts
+          );
+        } catch (e) {
+          if (!controller.signal.aborted) {
+            threw = e instanceof Error ? e.message : "فشل الإرسال";
+          }
+        }
+        patchLastMessage({ streaming: false });
+        if (controller.signal.aborted) {
+          setStatus("تم إيقاف التوليد");
+          return;
+        }
+        const raw = threw ?? failed;
+        if (!raw) {
+          setStatus("");
+          await refreshAfterNewConv(token, wasNew);
+          return;
+        }
+        setMessages((ms) => ms.slice(0, -1));
+        if (attempt === 0 && isTransientError(raw)) {
+          setStatus("الخدمة مشغولة، بنحاول تلقائياً…");
+          await new Promise((r) => setTimeout(r, 2500));
+          continue;
+        }
+        setStatus(`خطأ: ${friendlyError(raw)}`);
+        return;
+      }
+    } finally {
+      setBusy(false);
+      abortRef.current = null;
+    }
+  }
+
+  async function onRegenerate() {
+    if (!token || !activeConv || busy) return;
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    if (!lastUser) return;
+    setMessages((ms) => ms.slice(0, ms.lastIndexOf(lastUser) + 1));
+    await runStream(lastUser.content, { regenerate: true });
+    listMessages(token, activeConv).then(setMessages).catch(() => {});
+  }
+
+  async function onSaveEdit(m: UiMessage) {
+    if (!token || !activeConv || !editText.trim() || busy) return;
+    const newText = editText.trim();
+    setEditingId(null);
+    setMessages((ms) => {
+      const idx = ms.findIndex((x) => x.id === m.id);
+      if (idx < 0) return ms;
+      const copy = ms.slice(0, idx);
+      copy.push({ ...m, content: newText });
+      return copy;
+    });
+    await runStream(newText, { editMessageId: m.id });
+    listMessages(token, activeConv).then(setMessages).catch(() => {});
   }
 
   async function send() {
@@ -188,61 +315,12 @@ export default function ChatPage() {
       data_base64: a.data_base64,
     }));
     setAttachments([]);
-    setBusy(true);
-    const wasNew = !activeConv;
-    const userMsg: UiMessage = {
+    appendMessage({
       id: `local-${Date.now()}`,
       role: "user",
       content: text + (atts.length ? `\n[${atts.length} صورة مرفقة]` : ""),
-    };
-    const assistantMsg: UiMessage = {
-      id: `local-a-${Date.now()}`,
-      role: "assistant",
-      content: "",
-      streaming: true,
-    };
-    setMessages((ms) => [...ms, userMsg, assistantMsg]);
-    const controller = new AbortController();
-    abortRef.current = controller;
-    try {
-      await streamChatAbortable(
-        token,
-        finalText,
-        activeConv,
-        model || null,
-        {
-          onToken: (content) => {
-            setMessages((ms) => {
-              const copy = [...ms];
-              const last = copy[copy.length - 1];
-              copy[copy.length - 1] = { ...last, content: last.content + content };
-              return copy;
-            });
-          },
-          onFallback: (from) => setStatus(`المزود ${from} لم يستجب، جاري التبديل…`),
-          onError: (error) => setStatus(`خطأ: ${error}`),
-          onDone: (provider, m) => {
-            patchLastMessage({ provider, model: m, streaming: false });
-            setStatus("");
-          },
-        },
-        atts,
-        controller.signal
-      );
-      patchLastMessage({ streaming: false });
-      await refreshAfterNewConv(token, wasNew);
-    } catch (e) {
-      if (controller.signal.aborted) {
-        patchLastMessage({ streaming: false });
-        setStatus("تم إيقاف التوليد");
-      } else {
-        setStatus(e instanceof Error ? e.message : "فشل الإرسال");
-        setMessages((ms) => ms.slice(0, -1));
-      }
-    } finally {
-      setBusy(false);
-      abortRef.current = null;
-    }
+    });
+    await runStream(finalText, {}, atts);
   }
 
   async function sendResearch(q: string) {
@@ -384,7 +462,37 @@ export default function ChatPage() {
         >
           + محادثة جديدة
         </button>
-        {conversations.map((c) => (
+        <input
+          className="search-input"
+          placeholder="ابحث في المحادثات…"
+          value={searchQ}
+          onChange={(e) => setSearchQ(e.target.value)}
+        />
+        {searchResults !== null && (
+          <div className="search-results">
+            {searchResults.length === 0 && (
+              <div className="search-empty">لا توجد نتائج</div>
+            )}
+            {searchResults.map((r) => (
+              <div
+                key={r.id}
+                role="button"
+                tabIndex={0}
+                className="conv-item"
+                onClick={() => {
+                  setActiveConv(r.id);
+                  setSearchQ("");
+                  setSidebarOpen(false);
+                }}
+                onKeyDown={(e) => e.key === "Enter" && setActiveConv(r.id)}
+              >
+                <span className="conv-title">{r.title}</span>
+                <span className="search-snippet">{r.snippet}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {searchResults === null && conversations.map((c) => (
           <div
             key={c.id}
             role="button"
@@ -477,11 +585,23 @@ export default function ChatPage() {
               </div>
             </div>
           ) : (
-            messages.map((m) => (
+            messages.map((m, idx) => (
               <div key={m.id} className={`msg-row ${m.role}`}>
                 <div className="avatar">{m.role === "user" ? "أنت" : "✦"}</div>
                 <div className="bubble">
-                  {m.role === "assistant" ? (
+                  {editingId === m.id ? (
+                    <div className="edit-box">
+                      <textarea
+                        rows={3}
+                        value={editText}
+                        onChange={(e) => setEditText(e.target.value)}
+                      />
+                      <div className="msg-actions">
+                        <button onClick={() => onSaveEdit(m)}>حفظ وإعادة الإرسال</button>
+                        <button onClick={() => setEditingId(null)}>إلغاء</button>
+                      </div>
+                    </div>
+                  ) : m.role === "assistant" ? (
                     <div className={`md ${m.streaming ? "cursor" : ""}`}>
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>
                         {m.content || "…"}
@@ -525,8 +645,27 @@ export default function ChatPage() {
                       <button onClick={() => copyMessage(m)}>
                         {copiedId === m.id ? "✓ اتنسخ" : "نسخ"}
                       </button>
+                      {idx === messages.length - 1 && activeConv && !busy && (
+                        <button onClick={onRegenerate}>↻ إعادة التوليد</button>
+                      )}
                     </div>
                   )}
+                  {m.role === "user" &&
+                    !m.id.startsWith("local") &&
+                    editingId !== m.id &&
+                    activeConv &&
+                    !busy && (
+                      <div className="msg-actions">
+                        <button
+                          onClick={() => {
+                            setEditingId(m.id);
+                            setEditText(m.content);
+                          }}
+                        >
+                          تعديل
+                        </button>
+                      </div>
+                    )}
                 </div>
               </div>
             ))
