@@ -1,7 +1,18 @@
 """Pydantic request/response schemas for the public API."""
 from __future__ import annotations
 
-from pydantic import BaseModel, EmailStr, Field
+import unicodedata
+
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+
+def _clean_email(value: str) -> str:
+    """Strip invisible bidi/format characters and whitespace that mobile
+    keyboards (especially Arabic layouts) insert, then lowercase."""
+    cleaned = "".join(
+        ch for ch in value.strip() if unicodedata.category(ch) != "Cf"
+    )
+    return cleaned.strip().lower()
 
 
 class RegisterRequest(BaseModel):
@@ -9,10 +20,19 @@ class RegisterRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
     display_name: str = Field(default="", max_length=120)
 
+    _email_clean = field_validator("email", mode="before")(_clean_email)
+
+    @field_validator("display_name", mode="before")
+    @classmethod
+    def _name_strip(cls, v: str) -> str:
+        return v.strip() if isinstance(v, str) else v
+
 
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+    _email_clean = field_validator("email", mode="before")(_clean_email)
 
 
 class TokenResponse(BaseModel):
