@@ -43,6 +43,59 @@ SYSTEM_PROMPT = (
 )
 
 
+def friendly_error(raw: str) -> str:
+    """Map raw provider/infra errors to a friendly Arabic user message."""
+    low = raw.lower()
+    if any(k in low for k in ("503", "high demand", "unavailable", "overload")):
+        return "الخدمة مشغولة شوية دلوقتي بسبب الضغط، جرب تاني بعد ثواني."
+    if any(k in low for k in ("429", "rate limit", "quota", "too many")):
+        return "وصلنا للحد المؤقت للطلبات، استنى دقيقة وجرب تاني."
+    if any(k in low for k in ("no provider", "all providers failed")):
+        return "مفيش مزود ذكاء اصطناعي متاح حالياً، جرب بعد شوية."
+    if any(k in low for k in ("timeout", "timed out")):
+        return "المزود استغرق وقت أطول من اللازم، جرب تاني."
+    return "حصل خطأ غير متوقع أثناء تنفيذ طلبك، جرب تاني."
+
+
+async def _load_conv_messages(session, conversation_id: str) -> list[Message]:
+    result = await session.execute(
+        select(Message)
+        .where(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at, Message.id)
+    )
+    return list(result.scalars().all())
+
+
+async def _apply_edit_or_regenerate(session, conv: Conversation, body: ChatRequest) -> None:
+    """For regenerate: drop trailing assistant messages after the last user
+    message. For edit: update the target user message and drop everything
+    after it. Raises 404/422 on bad targets."""
+    messages = await _load_conv_messages(session, conv.id)
+    if body.edit_message_id:
+        idx = next(
+            (i for i, m in enumerate(messages) if m.id == body.edit_message_id),
+            None,
+        )
+        if idx is None or messages[idx].role != "user":
+            raise HTTPException(status_code=404, detail="message not found")
+        messages[idx].content = body.message
+        for m in messages[idx + 1 :]:
+            await session.delete(m)
+        await session.flush()
+        return
+    # regenerate
+    idx = len(messages) - 1
+    while idx >= 0 and messages[idx].role != "user":
+        idx -= 1
+    if idx < 0:
+        raise HTTPException(
+            status_code=422, detail="no user message to regenerate from"
+        )
+    for m in messages[idx + 1 :]:
+        await session.delete(m)
+    await session.flush()
+
+
 def _check_rate_limit(request: Request, user: User) -> None:
     limiter = get_rate_limiter(request)
     if not limiter.allow(user.id):
@@ -93,12 +146,15 @@ async def chat(
     conv = await _get_or_create_conversation(
         session, user, body.conversation_id, body.message
     )
-    stored = body.message
-    if body.attachments:
-        kinds = ", ".join(a.mime_type for a in body.attachments)
-        stored = f"{body.message}\n[مرفقات: {kinds}]"
-    session.add(Message(conversation_id=conv.id, role="user", content=stored))
-    await session.flush()
+    if body.regenerate or body.edit_message_id:
+        await _apply_edit_or_regenerate(session, conv, body)
+    else:
+        stored = body.message
+        if body.attachments:
+            kinds = ", ".join(a.mime_type for a in body.attachments)
+            stored = f"{body.message}\n[مرفقات: {kinds}]"
+        session.add(Message(conversation_id=conv.id, role="user", content=stored))
+        await session.flush()
 
     history = [{"role": "system", "content": SYSTEM_PROMPT}]
     history += await _load_history(session, conv.id)
@@ -118,7 +174,8 @@ async def chat(
     except Exception as exc:
         await session.rollback()
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=friendly_error(str(exc)),
         ) from exc
 
     reply = Message(
@@ -145,7 +202,12 @@ async def _chat_stream(body: ChatRequest, request: Request, user: User, session)
     conv = await _get_or_create_conversation(
         session, user, body.conversation_id, body.message
     )
-    session.add(Message(conversation_id=conv.id, role="user", content=body.message))
+    if body.regenerate or body.edit_message_id:
+        await _apply_edit_or_regenerate(session, conv, body)
+    else:
+        session.add(
+            Message(conversation_id=conv.id, role="user", content=body.message)
+        )
     # Commit now: the generator writes the assistant reply in a separate
     # session after the response starts, and SQLite allows one writer.
     await session.commit()
@@ -171,7 +233,7 @@ async def _chat_stream(body: ChatRequest, request: Request, user: User, session)
                 yield f"event: fallback\ndata: {json.dumps({'from': event['from'], 'reason': event['reason']})}\n\n"
             elif event["type"] == "error":
                 errored = True
-                yield f"event: error\ndata: {json.dumps({'error': event['error']})}\n\n"
+                yield f"event: error\ndata: {json.dumps({'error': friendly_error(event['error'])})}\n\n"
         # Persist in a fresh session: the request session may have closed.
         if collected:
             async with session_factory() as write_session:
@@ -196,6 +258,49 @@ async def _chat_stream(body: ChatRequest, request: Request, user: User, session)
 async def list_models(request: Request, user: User = Depends(get_current_user)):
     router = get_router(request)
     return [ModelInfoResponse(**m) for m in router.list_models()]
+
+
+@router.get("/conversations/search")
+async def search_conversations(
+    q: str,
+    user: User = Depends(get_current_user),
+    session=Depends(get_session),
+):
+    """Search the user's conversations by title and message content.
+    Returns matching conversations with a snippet of the first match."""
+    query = q.strip()
+    if not query:
+        return []
+    like = f"%{query}%"
+    result = await session.execute(
+        select(Conversation)
+        .where(Conversation.user_id == user.id)
+        .order_by(Conversation.updated_at.desc())
+    )
+    convs = list(result.scalars().all())
+    matches = []
+    for conv in convs:
+        snippet = None
+        if query.lower() in conv.title.lower():
+            snippet = conv.title
+        else:
+            msgs = await _load_conv_messages(session, conv.id)
+            for m in msgs:
+                pos = m.content.lower().find(query.lower())
+                if pos >= 0:
+                    start = max(0, pos - 40)
+                    snippet = ("…" if start else "") + m.content[start : pos + 80]
+                    break
+        if snippet is not None:
+            matches.append(
+                {
+                    "id": conv.id,
+                    "title": conv.title,
+                    "updated_at": conv.updated_at.isoformat(),
+                    "snippet": snippet,
+                }
+            )
+    return matches
 
 
 @router.post("/images")
