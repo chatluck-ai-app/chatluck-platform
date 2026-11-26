@@ -2,6 +2,7 @@
 model catalog, image generation, and user-controlled memory."""
 from __future__ import annotations
 
+import asyncio
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -15,6 +16,7 @@ from .deps import (
     get_router,
     get_session,
 )
+from .brain import auto_learn, memory_block
 from .models import Conversation, GeneratedImage, MemoryItem, Message, User
 from .providers.base import Message as ProviderMessage
 from .schemas import (
@@ -23,7 +25,10 @@ from .schemas import (
     ConversationResponse,
     MemoryItemRequest,
     MemoryItemResponse,
+    MemoryItemUpdate,
     ModelInfoResponse,
+    UserSettingsIn,
+    UserSettingsOut,
 )
 
 router = APIRouter(prefix="/v1", tags=["chat"])
@@ -103,6 +108,17 @@ def _check_rate_limit(request: Request, user: User) -> None:
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="rate limit exceeded, slow down",
         )
+    # Global guards so public traffic cannot drain the free provider keys.
+    if not request.app.state.global_chat_limiter.allow("global"):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="الخدمة مشغولة دلوقتي — جرّب بعد دقيقة",
+        )
+    if not request.app.state.daily_chat.allow():
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="وصلنا لحد الخدمة المجانية النهاردة — نرجع نكمل بكرة",
+        )
 
 
 async def _load_history(session, conversation_id: str) -> list[ProviderMessage]:
@@ -156,7 +172,9 @@ async def chat(
         session.add(Message(conversation_id=conv.id, role="user", content=stored))
         await session.flush()
 
-    history = [{"role": "system", "content": SYSTEM_PROMPT}]
+    history = [
+        {"role": "system", "content": SYSTEM_PROMPT + await memory_block(session, user.id)}
+    ]
     history += await _load_history(session, conv.id)
     if body.attachments:
         history[-1] = {
@@ -189,6 +207,11 @@ async def chat(
     await session.flush()
     await audit(session, user.id, "chat.complete", f"provider={provider_name}")
     await session.commit()
+    asyncio.create_task(
+        auto_learn(
+            request.app.state.session_factory, router, user.id, body.message, text
+        )
+    )
     return ChatResponse(
         conversation_id=conv.id,
         message_id=reply.id,
@@ -211,7 +234,9 @@ async def _chat_stream(body: ChatRequest, request: Request, user: User, session)
     # Commit now: the generator writes the assistant reply in a separate
     # session after the response starts, and SQLite allows one writer.
     await session.commit()
-    history = [{"role": "system", "content": SYSTEM_PROMPT}]
+    history = [
+        {"role": "system", "content": SYSTEM_PROMPT + await memory_block(session, user.id)}
+    ]
     history += await _load_history(session, conv.id)
     conversation_id = conv.id
     provider_router = get_router(request)
@@ -248,6 +273,11 @@ async def _chat_stream(body: ChatRequest, request: Request, user: User, session)
                 )
                 await audit(write_session, user_id, "chat.stream", f"provider={provider_name}")
                 await write_session.commit()
+            asyncio.create_task(
+                auto_learn(
+                    session_factory, provider_router, user_id, body.message, "".join(collected)
+                )
+            )
         if not errored:
             yield f"event: done\ndata: {json.dumps({'provider': provider_name, 'model': model_id})}\n\n"
 
@@ -578,6 +608,28 @@ async def add_memory(
     )
 
 
+@router.put("/memory/{item_id}", response_model=MemoryItemResponse)
+async def update_memory(
+    item_id: str,
+    body: MemoryItemUpdate,
+    user: User = Depends(get_current_user),
+    session=Depends(get_session),
+):
+    result = await session.execute(
+        select(MemoryItem).where(MemoryItem.id == item_id)
+    )
+    item = result.scalar_one_or_none()
+    if item is None or item.user_id != user.id:
+        raise HTTPException(status_code=404, detail="memory item not found")
+    item.content = body.content
+    await audit(session, user.id, "memory.update", item_id)
+    await session.commit()
+    return MemoryItemResponse(
+        id=item.id, kind=item.kind, content=item.content,
+        created_at=item.created_at.isoformat(),
+    )
+
+
 @router.delete("/memory/{item_id}", status_code=204)
 async def delete_memory(
     item_id: str,
@@ -593,6 +645,25 @@ async def delete_memory(
     await session.delete(item)
     await audit(session, user.id, "memory.delete", item_id)
     await session.commit()
+
+
+@router.get("/settings", response_model=UserSettingsOut)
+async def get_user_settings(user: User = Depends(get_current_user)):
+    return UserSettingsOut(memory_enabled=user.memory_enabled)
+
+
+@router.put("/settings", response_model=UserSettingsOut)
+async def put_user_settings(
+    body: UserSettingsIn,
+    user: User = Depends(get_current_user),
+    session=Depends(get_session),
+):
+    user.memory_enabled = body.memory_enabled
+    await audit(
+        session, user.id, "settings.update", f"memory_enabled={body.memory_enabled}"
+    )
+    await session.commit()
+    return UserSettingsOut(memory_enabled=user.memory_enabled)
 
 
 @router.get("/memory/export")
