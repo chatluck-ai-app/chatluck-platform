@@ -464,6 +464,7 @@ export default function ChatPage() {
                 });
               },
               onFallback: (from) => setStatus(`المزود ${from} لم يستجب، جاري التبديل…`),
+              onSources: (srcs) => patchLastMessage({ sources: srcs }),
               onError: (error) => {
                 failed = error;
               },
