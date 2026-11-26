@@ -80,3 +80,31 @@ async def test_register_with_invisible_keyboard_chars(client):
         json={"email": "Keyboard-User@gmail.com", "password": "secret123"},
     )
     assert resp.status_code == 200, resp.text
+
+
+async def test_change_password_and_profile(client):
+    token = await register_user(client, "settings@test.com")
+    h = auth_headers(token)
+
+    resp = await client.patch("/v1/auth/me", json={"display_name": "حسام"}, headers=h)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["display_name"] == "حسام"
+
+    resp = await client.post(
+        "/v1/auth/change-password",
+        json={"current_password": "wrong-pass", "new_password": "newpass123"},
+        headers=h,
+    )
+    assert resp.status_code == 401
+
+    resp = await client.post(
+        "/v1/auth/change-password",
+        json={"current_password": "secret123", "new_password": "newpass123"},
+        headers=h,
+    )
+    assert resp.status_code == 204, resp.text
+
+    resp = await client.post(
+        "/v1/auth/login", json={"email": "settings@test.com", "password": "newpass123"}
+    )
+    assert resp.status_code == 200
