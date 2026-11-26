@@ -42,7 +42,7 @@ async def test_circuit_breaker_skips_open_provider():
 
     clock[0] += 121  # cooldown elapsed
     await router.complete([{"role": "user", "content": "hi"}])
-    assert bad.calls == calls_before + 1  # retried after cooldown
+    assert bad.calls == calls_before + 3  # retried after cooldown (1 try + 2 transient retries)
 
 
 async def test_manual_model_selection_is_honored():
@@ -101,3 +101,14 @@ async def test_list_models_reports_availability():
     models = router.list_models()
     by_provider = {m["provider"]: m["available"] for m in models}
     assert by_provider == {"off": False, "on": True}
+
+
+async def test_retryable_failure_is_retried_before_fallback():
+    from conftest import FakeProvider, make_router
+
+    flaky = FakeProvider(name="flaky", fail_times=1)
+    router = make_router(flaky)
+    text, provider, _ = await router.complete([{"role": "user", "content": "hi"}])
+    assert provider == "flaky"
+    assert text == flaky.reply
+    assert flaky.calls == 2  # one failure + one successful retry
