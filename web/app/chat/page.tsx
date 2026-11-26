@@ -16,6 +16,9 @@ import {
   MeInfo,
   MemoryItem,
   addMemory,
+  getSettings,
+  updateSettings,
+  updateMemory,
   changePassword,
   deleteConversation,
   deleteMemory,
@@ -48,8 +51,8 @@ interface UiMessage extends ChatMessage {
 }
 
 const TOOLS: { mode: Mode | "agents"; icon: string; name: string; desc: string }[] = [
-  { mode: "research", icon: "🔎", name: "بحث الإنترنت", desc: "إجابات بمصادر حقيقية وروابط موثوقة" },
-  { mode: "image", icon: "🎨", name: "استوديو الصور", desc: "أنشئ صوراً من وصف نصي بالعربي أو الإنجليزي" },
+  { mode: "research", icon: "🔎", name: "بحث الإنترنت", desc: "إجابات بمصادر حقيقية وروابط موثوقة (خدمة مجانية — قد تكون مشغولة أحيانًا)" },
+  { mode: "image", icon: "🎨", name: "استوديو الصور", desc: "أنشئ صوراً من وصف نصي بالعربي أو الإنجليزي (خدمة مجانية — قد تكون مشغولة أحيانًا)" },
   { mode: "translate", icon: "🌍", name: "الترجمة الاحترافية", desc: "ترجمة بسياق وبأسلوب رسمي أو طبيعي" },
   { mode: "code", icon: "💻", name: "مساعد البرمجة", desc: "اكتب واشرح وأصلح الكود بأي لغة" },
   { mode: "agents", icon: "🤖", name: "المساعدون المتخصصون", desc: "فريق وكلاء ينفذ مهام مركبة خطوة بخطوة" },
@@ -122,6 +125,7 @@ export default function ChatPage() {
   const [pwNew, setPwNew] = useState("");
   const [settingsMsg, setSettingsMsg] = useState("");
   const [memory, setMemory] = useState<MemoryItem[]>([]);
+  const [memoryEnabled, setMemoryEnabled] = useState(true);
   const [memKind, setMemKind] = useState("preference");
   const [memContent, setMemContent] = useState("");
   const [theme, setTheme] = useState<"dark" | "light">("dark");
@@ -217,6 +221,34 @@ export default function ChatPage() {
       })
       .catch(() => {});
     listMemory(token).then(setMemory).catch(() => {});
+    getSettings(token)
+      .then((st) => setMemoryEnabled(st.memory_enabled))
+      .catch(() => {});
+  }
+
+  async function toggleMemoryEnabled() {
+    if (!token) return;
+    const next = !memoryEnabled;
+    setMemoryEnabled(next);
+    try {
+      await updateSettings(token, { memory_enabled: next });
+      setSettingsMsg(next ? "الذاكرة التلقائية شغالة ✓" : "الذاكرة التلقائية مقفولة ✓");
+    } catch {
+      setMemoryEnabled(!next);
+      setSettingsMsg("فشل حفظ الإعداد");
+    }
+  }
+
+  async function editMemoryItem(item: MemoryItem) {
+    if (!token) return;
+    const next = window.prompt("عدّل العنصر:", item.content);
+    if (next === null || !next.trim() || next.trim() === item.content) return;
+    try {
+      await updateMemory(token, item.id, next.trim());
+      setMemory((ms) => ms.map((m) => (m.id === item.id ? { ...m, content: next.trim() } : m)));
+    } catch {
+      setSettingsMsg("فشل تعديل العنصر");
+    }
   }
 
   async function saveProfile() {
@@ -944,7 +976,10 @@ export default function ChatPage() {
                     }}
                   >
                     <span className="t-icon">{t.icon}</span>
-                    <span className="t-name">{t.name}</span>
+                    <span className="t-text">
+                      <span className="t-name">{t.name}</span>
+                      <span className="t-desc">{t.desc}</span>
+                    </span>
                   </button>
                 ))}
               </div>
@@ -1107,14 +1142,23 @@ export default function ChatPage() {
               <div className="m-sub">
                 معلومات يتذكرها المساعد عنك لتخصيص إجاباته.
               </div>
+              <div className="settings-row" style={{ marginTop: 8 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                  <input type="checkbox" checked={memoryEnabled} onChange={toggleMemoryEnabled} />
+                  <span>الذاكرة التلقائية (يتعلم من محادثاتك ويستخدمها في الردود)</span>
+                </label>
+              </div>
               {memory.length === 0 && <div className="m-sub">لا توجد عناصر محفوظة بعد.</div>}
               {memory.map((m) => (
                 <div key={m.id} className="memory-item">
                   <span className="memory-kind">
-                    {m.kind === "preference" ? "تفضيل" : m.kind === "project" ? "مشروع" : m.kind === "task_history" ? "سجل" : "ملف"}
+                    {m.kind === "preference" ? "تفضيل" : m.kind === "project" ? "مشروع" : m.kind === "task_history" ? "سجل" : m.kind === "auto" ? "تعلّم تلقائي" : "ملف"}
                   </span>
                   <span className="memory-content">{m.content}</span>
-                  <button className="memory-del" onClick={() => removeMemoryItem(m.id)}>
+                  <button className="memory-del" title="تعديل" onClick={() => editMemoryItem(m)}>
+                    ✏️
+                  </button>
+                  <button className="memory-del" title="حذف" onClick={() => removeMemoryItem(m.id)}>
                     ×
                   </button>
                 </div>
