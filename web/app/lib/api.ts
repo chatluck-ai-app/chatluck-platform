@@ -27,11 +27,21 @@ export interface ModelInfo {
 
 /** FastAPI returns detail as a string (our errors) or an array of
  * {loc, msg} objects (request validation). Always produce readable text. */
+/** Map known English backend/validation strings to Arabic; pass others through. */
+export function friendlyDetail(msg: string): string {
+  const low = msg.toLowerCase();
+  if (low.includes("invalid email or password")) return "الإيميل أو كلمة السر غير صحيحة";
+  if (low.includes("email already registered")) return "الإيميل ده مسجل قبل كده — جرب تسجيل الدخول";
+  if (low.includes("valid email")) return "صيغة الإيميل مش صحيحة";
+  if (low.includes("at least 8")) return "كلمة السر لازم تكون 8 أحرف على الأقل";
+  return msg;
+}
+
 export function errorDetail(data: unknown, fallback: string): string {
   const d = (data as { detail?: unknown })?.detail;
-  if (typeof d === "string") return d;
+  if (typeof d === "string") return friendlyDetail(d);
   if (Array.isArray(d) && d.length > 0) {
-    return d
+    const joined = d
       .map((e) => {
         const loc = Array.isArray(e?.loc) ? e.loc[e.loc.length - 1] : "";
         const msg = typeof e?.msg === "string" ? e.msg : "";
@@ -39,6 +49,7 @@ export function errorDetail(data: unknown, fallback: string): string {
       })
       .filter(Boolean)
       .join(" — ");
+    return friendlyDetail(joined);
   }
   return fallback;
 }
