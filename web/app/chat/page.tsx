@@ -28,6 +28,8 @@ import {
   listMessages,
   listModels,
   listMemory,
+  GalleryImage,
+  imageHistory,
   renameConversation,
   research,
   runAgent,
@@ -120,6 +122,10 @@ export default function ChatPage() {
   const [memKind, setMemKind] = useState("preference");
   const [memContent, setMemContent] = useState("");
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [imgSize, setImgSize] = useState("1024x1024");
+  const [imgStyle, setImgStyle] = useState("");
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [gallery, setGallery] = useState<GalleryImage[]>([]);
 
   useEffect(() => {
     const saved = (localStorage.getItem("chatluck_theme") as "dark" | "light") || "dark";
@@ -491,13 +497,24 @@ export default function ChatPage() {
     }
   }
 
+  async function openGallery() {
+    if (!token) return;
+    setGalleryOpen(true);
+    imageHistory(token).then(setGallery).catch(() => setStatus("تعذر تحميل المعرض"));
+  }
+
   async function sendImage(prompt: string) {
     if (!token) return;
     setBusy(true);
     setStatus("جاري إنشاء الصورة…");
     appendMessage({ id: `local-${Date.now()}`, role: "user", content: `🎨 ${prompt}` });
     try {
-      const r = await generateImage(token, prompt);
+      const [w, h] = imgSize.split("x").map(Number);
+      const r = await generateImage(token, prompt, {
+        width: w,
+        height: h,
+        style: imgStyle || undefined,
+      });
       appendMessage({
         id: `local-i-${Date.now()}`,
         role: "assistant",
@@ -828,6 +845,26 @@ export default function ChatPage() {
                 {MODE_META[mode].chip}
                 <button onClick={() => setMode("chat")}>×</button>
               </span>
+              {mode === "image" && (
+                <>
+                  <select className="img-opt" value={imgSize} onChange={(e) => setImgSize(e.target.value)}>
+                    <option value="1024x1024">مربع 1:1</option>
+                    <option value="1280x720">عريض 16:9</option>
+                    <option value="720x1280">طولي 9:16</option>
+                  </select>
+                  <select className="img-opt" value={imgStyle} onChange={(e) => setImgStyle(e.target.value)}>
+                    <option value="">بدون أسلوب</option>
+                    <option value="realistic">واقعي</option>
+                    <option value="anime">أنمي</option>
+                    <option value="oil">رسم زيتي</option>
+                    <option value="3d">ثلاثي الأبعاد</option>
+                    <option value="fantasy">خيالي</option>
+                  </select>
+                  <button className="gallery-btn" onClick={openGallery}>
+                    🖼 المعرض
+                  </button>
+                </>
+              )}
             </div>
           )}
           {(attachments.length > 0 || docAttachment) && (
@@ -896,6 +933,29 @@ export default function ChatPage() {
           </div>
         </div>
       </main>
+
+      {galleryOpen && (
+        <div className="modal-back" onClick={() => setGalleryOpen(false)}>
+          <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+            <button className="close-x" onClick={() => setGalleryOpen(false)}>
+              ×
+            </button>
+            <h3>معرض الصور</h3>
+            {gallery.length === 0 && (
+              <div className="m-sub">لسه مفيش صور — أنشئ أول صورة من وضع الصور.</div>
+            )}
+            <div className="gallery-grid">
+              {gallery.map((g) => (
+                <a key={g.id} href={g.url} target="_blank" rel="noreferrer" className="gallery-item">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={g.url} alt={g.prompt} loading="lazy" />
+                  <span className="gallery-prompt">{g.prompt}</span>
+                </a>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {settingsOpen && (
         <div className="modal-back" onClick={() => setSettingsOpen(false)}>
