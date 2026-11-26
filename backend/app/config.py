@@ -25,6 +25,10 @@ class Settings:
     # Rate limiting (per user, in-memory token bucket)
     cors_origins: list[str] = field(default_factory=lambda: ["*"])
     rate_limit_per_minute: int = 60
+    # Guardrails so public/guest visitors cannot drain the free provider keys
+    register_per_hour_per_ip: int = 10
+    global_chat_per_minute: int = 25
+    global_chat_per_day: int = 1200
 
     environment: str = "development"
 
@@ -50,6 +54,15 @@ class Settings:
         s.openrouter_api_key = os.environ.get("OPENROUTER_API_KEY") or None
         s.environment = os.environ.get("ENVIRONMENT", s.environment)
         s.admin_emails = os.environ.get("ADMIN_EMAILS", s.admin_emails)
+        s.register_per_hour_per_ip = int(
+            os.environ.get("REGISTER_PER_HOUR_PER_IP", s.register_per_hour_per_ip)
+        )
+        s.global_chat_per_minute = int(
+            os.environ.get("GLOBAL_CHAT_PER_MINUTE", s.global_chat_per_minute)
+        )
+        s.global_chat_per_day = int(
+            os.environ.get("GLOBAL_CHAT_PER_DAY", s.global_chat_per_day)
+        )
         if s.environment == "production" and s.jwt_secret == cls.jwt_secret:
             raise RuntimeError("JWT_SECRET must be set in production")
         return s
