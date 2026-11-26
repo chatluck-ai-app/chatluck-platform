@@ -35,6 +35,8 @@ class FakeProvider(BaseProvider):
             id=model_id, provider=name, capabilities=frozenset(capabilities)
         )
         self._configured = configured
+        self.last_messages = None
+        self.calls_log = []
 
     def models(self):
         return [self._model]
@@ -49,6 +51,8 @@ class FakeProvider(BaseProvider):
 
     async def chat(self, messages, model=None, **kw):
         self._maybe_fail()
+        self.last_messages = messages
+        self.calls_log.append(messages)
         return self.reply
 
     async def chat_stream(self, messages, model=None, **kw):
@@ -63,6 +67,9 @@ def settings(tmp_path):
         database_url=f"sqlite+aiosqlite:///{tmp_path}/test.db",
         jwt_secret="test-secret",
         rate_limit_per_minute=1000,
+        register_per_hour_per_ip=100000,
+        global_chat_per_minute=100000,
+        global_chat_per_day=100000,
     )
 
 
