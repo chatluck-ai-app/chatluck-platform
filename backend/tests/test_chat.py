@@ -128,3 +128,21 @@ async def test_memory_isolation(client):
     item_id = resp.json()["id"]
     resp = await client.delete(f"/v1/memory/{item_id}", headers=auth_headers(token_b))
     assert resp.status_code == 404
+
+
+async def test_conversation_rename_and_delete(client):
+    token = await register_user(client, "conv-mgmt@test.com")
+    h = {"Authorization": f"Bearer {token}"}
+    resp = await client.post(
+        "/v1/chat", json={"message": "hello there"}, headers=h
+    )
+    conv_id = resp.json()["conversation_id"]
+    resp = await client.patch(
+        f"/v1/conversations/{conv_id}", json={"title": "عنوان جديد"}, headers=h
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["title"] == "عنوان جديد"
+    resp = await client.delete(f"/v1/conversations/{conv_id}", headers=h)
+    assert resp.status_code == 204
+    resp = await client.get("/v1/conversations", headers=h)
+    assert all(c["id"] != conv_id for c in resp.json())
