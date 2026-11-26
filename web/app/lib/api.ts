@@ -512,3 +512,21 @@ export async function streamChatAbortable(
     h.onMeta?.("", "", conversationIdSeen);
   }
 }
+
+export type AdminStats = {
+  users_total: number;
+  users_24h: number;
+  users_7d: number;
+  conversations_total: number;
+  messages_total: number;
+  messages_24h: number;
+  images_total: number;
+  by_model: { provider: string; model: string; messages: number }[];
+  recent_users: { email: string; display_name: string; created_at: string | null }[];
+};
+
+export async function adminStats(token: string): Promise<AdminStats> {
+  const resp = await fetch(`${API_URL}/v1/admin/stats`, { headers: headers(token) });
+  if (!resp.ok) throw new Error(errorDetail(await resp.json(), "تعذر تحميل الإحصائيات"));
+  return resp.json();
+}
