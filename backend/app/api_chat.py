@@ -144,7 +144,7 @@ async def chat(
     if body.stream:
         return await _chat_stream(body, request, user, session)
     conv = await _get_or_create_conversation(
-        session, user, body.conversation_id, body.message
+        session, user, body.conversation_id, body.title_hint or body.message
     )
     if body.regenerate or body.edit_message_id:
         await _apply_edit_or_regenerate(session, conv, body)
@@ -200,7 +200,7 @@ async def chat(
 
 async def _chat_stream(body: ChatRequest, request: Request, user: User, session):
     conv = await _get_or_create_conversation(
-        session, user, body.conversation_id, body.message
+        session, user, body.conversation_id, body.title_hint or body.message
     )
     if body.regenerate or body.edit_message_id:
         await _apply_edit_or_regenerate(session, conv, body)
