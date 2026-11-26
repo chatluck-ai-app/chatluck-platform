@@ -374,14 +374,32 @@ export interface ImageResult {
   model: string;
 }
 
+export interface GalleryImage extends ImageResult {
+  id: string;
+  prompt: string;
+  width: number;
+  height: number;
+  style: string;
+  created_at?: string;
+}
+
+export async function imageHistory(token: string): Promise<GalleryImage[]> {
+  const resp = await fetch(`${API_URL}/v1/images/history`, {
+    headers: headers(token),
+  });
+  if (!resp.ok) throw new Error("تعذر تحميل المعرض");
+  return resp.json();
+}
+
 export async function generateImage(
   token: string,
-  prompt: string
+  prompt: string,
+  opts: { width?: number; height?: number; style?: string } = {}
 ): Promise<ImageResult> {
   const resp = await fetch(`${API_URL}/v1/images`, {
     method: "POST",
     headers: headers(token),
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, ...opts }),
   });
   if (!resp.ok)
     throw new Error(errorDetail(await resp.json(), "فشل إنشاء الصورة"));
