@@ -96,6 +96,18 @@ class MemoryItemRequest(BaseModel):
     content: str = Field(min_length=1, max_length=8000)
 
 
+class MemoryItemUpdate(BaseModel):
+    content: str = Field(min_length=1, max_length=8000)
+
+
+class UserSettingsOut(BaseModel):
+    memory_enabled: bool
+
+
+class UserSettingsIn(BaseModel):
+    memory_enabled: bool
+
+
 class MemoryItemResponse(BaseModel):
     id: str
     kind: str
