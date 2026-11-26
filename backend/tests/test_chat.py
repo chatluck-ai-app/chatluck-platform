@@ -232,3 +232,16 @@ async def test_friendly_error_mapping():
     assert "استنى دقيقة" in friendly_error("HTTP 429 rate limit exceeded")
     assert "مزود" in friendly_error("all providers failed -> x")
     assert "غير متوقع" in friendly_error("something bizarre")
+
+
+async def test_image_history_and_validation(client):
+    token = await register_user(client, "gallery@test.com")
+    h = auth_headers(token)
+    # no image provider in the test app: generation 503s, history still works
+    resp = await client.get("/v1/images/history", headers=h)
+    assert resp.status_code == 200
+    assert resp.json() == []
+    resp = await client.post(
+        "/v1/images", json={"prompt": "x", "width": 10, "height": 10}, headers=h
+    )
+    assert resp.status_code == 422
