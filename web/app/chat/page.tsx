@@ -22,6 +22,7 @@ import {
   extractFile,
   friendlyError,
   getMe,
+  adminStats,
   generateImage,
   isTransientError,
   listConversations,
@@ -113,6 +114,7 @@ export default function ChatPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [me, setMe] = useState<MeInfo | null>(null);
   const [meName, setMeName] = useState("");
   const [pwCurrent, setPwCurrent] = useState("");
@@ -290,6 +292,7 @@ export default function ChatPage() {
       })
       .catch(() => setStatus("تعذر تحميل النماذج"));
     agentCatalog(token).then(setAgents).catch(() => {});
+    adminStats(token).then(() => setIsAdmin(true)).catch(() => setIsAdmin(false));
   }, [token, refreshConversations]);
 
   useEffect(() => {
@@ -1080,6 +1083,15 @@ export default function ChatPage() {
                 </button>
               </div>
             </div>
+
+            {isAdmin && (
+              <div className="settings-section">
+                <h4>لوحة المشرف</h4>
+                <button className="msg-actions-btn" onClick={() => router.push("/admin")}>
+                  📊 فتح لوحة التحكم
+                </button>
+              </div>
+            )}
 
             <div className="settings-section">
               <h4>المظهر</h4>
