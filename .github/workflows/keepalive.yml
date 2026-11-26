@@ -1,12 +1,17 @@
-name: Keep Render services warm
+name: Keep Render API warm
 
-# Render's free tier sleeps services after ~15 minutes without traffic, and a
-# cold start takes ~50s. Ping the API and web app every 10 minutes so a real
-# user never pays that cold-start penalty. Free: runs on GitHub Actions.
+# Render's free tier sleeps Docker web services after ~15 minutes without
+# traffic, and a cold start takes ~50s. The workspace gets 750 free instance
+# hours/month shared by all services, so we cannot keep everything warm 24/7:
+# - chatluck-web is a STATIC site: always instant, never sleeps, costs nothing.
+# - chatluck-backend (Telegram bot) wakes on webhook traffic and during tasks.
+# - chatluck-api is the only service worth pre-warming, and only in the user's
+#   active window (12:00-01:00 Cairo). Outside it, his own traffic wakes it.
+# Free: runs on GitHub Actions.
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "*/10 10-23 * * *" # 12:00-01:59 Africa/Cairo
   workflow_dispatch:
 
 jobs:
@@ -14,7 +19,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Ping API and web
+      - name: Ping API
         run: |
           curl -s -o /dev/null -w "api %{http_code} %{time_total}s\n" https://chatluck-api.onrender.com/v1/models || true
-          curl -s -o /dev/null -w "web %{http_code} %{time_total}s\n" https://chatluck-web.onrender.com/ || true
