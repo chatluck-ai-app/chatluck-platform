@@ -64,6 +64,7 @@ class ChatRequest(BaseModel):
     attachments: list[AttachmentIn] | None = None
     regenerate: bool = False  # re-answer the last user message
     edit_message_id: str | None = None  # replace this user message, drop later ones
+    title_hint: str | None = None  # preferred title when creating a conversation
 
 
 class ChatResponse(BaseModel):
