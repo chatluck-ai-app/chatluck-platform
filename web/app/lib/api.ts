@@ -371,6 +371,43 @@ export async function addMemory(
   if (!resp.ok) throw new Error(errorDetail(await resp.json(), "فشل حفظ الذاكرة"));
 }
 
+export async function updateMemory(
+  token: string,
+  id: string,
+  content: string
+): Promise<MemoryItem> {
+  const resp = await fetch(`${API_URL}/v1/memory/${id}`, {
+    method: "PUT",
+    headers: headers(token),
+    body: JSON.stringify({ content }),
+  });
+  if (!resp.ok) throw new Error("فشل تعديل العنصر");
+  return resp.json();
+}
+
+export interface UserSettings {
+  memory_enabled: boolean;
+}
+
+export async function getSettings(token: string): Promise<UserSettings> {
+  const resp = await fetch(`${API_URL}/v1/settings`, { headers: headers(token) });
+  if (!resp.ok) throw new Error("تعذر تحميل الإعدادات");
+  return resp.json();
+}
+
+export async function updateSettings(
+  token: string,
+  s: UserSettings
+): Promise<UserSettings> {
+  const resp = await fetch(`${API_URL}/v1/settings`, {
+    method: "PUT",
+    headers: headers(token),
+    body: JSON.stringify(s),
+  });
+  if (!resp.ok) throw new Error("فشل حفظ الإعدادات");
+  return resp.json();
+}
+
 export async function deleteMemory(token: string, id: string): Promise<void> {
   const resp = await fetch(`${API_URL}/v1/memory/${id}`, {
     method: "DELETE",
