@@ -126,6 +126,69 @@ export default function ChatPage() {
   const [imgStyle, setImgStyle] = useState("");
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [gallery, setGallery] = useState<GalleryImage[]>([]);
+  const [listening, setListening] = useState(false);
+  const [speakingId, setSpeakingId] = useState<string | null>(null);
+  const recognitionRef = useRef<{ stop: () => void } | null>(null);
+  const dictationBaseRef = useRef("");
+  const [speechSupported, setSpeechSupported] = useState(false);
+
+  useEffect(() => {
+    const w = window as unknown as Record<string, unknown>;
+    setSpeechSupported(Boolean(w.SpeechRecognition || w.webkitSpeechRecognition));
+  }, []);
+
+  function toggleDictation() {
+    if (listening) {
+      recognitionRef.current?.stop();
+      setListening(false);
+      return;
+    }
+    const w = window as unknown as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
+    if (!SR) return;
+    dictationBaseRef.current = input;
+    const rec = new SR();
+    rec.lang = "ar-EG";
+    rec.interimResults = true;
+    rec.continuous = false;
+    rec.onresult = (e: { results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }) => {
+      let text = "";
+      for (let i = 0; i < e.results.length; i++) text += e.results[i][0].transcript;
+      setInput(dictationBaseRef.current + text);
+    };
+    rec.onend = () => setListening(false);
+    rec.onerror = () => setListening(false);
+    recognitionRef.current = rec;
+    rec.start();
+    setListening(true);
+  }
+
+  function stripMarkdown(c: string): string {
+    return c
+      .replace(/```[\s\S]*?```/g, " ")
+      .replace(/[#*_`>|\-[\]]/g, "")
+      .replace(/\((https?:[^)]+)\)/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function toggleSpeak(m: UiMessage) {
+    const synth = window.speechSynthesis;
+    if (!synth) return;
+    if (speakingId === m.id) {
+      synth.cancel();
+      setSpeakingId(null);
+      return;
+    }
+    synth.cancel();
+    const u = new SpeechSynthesisUtterance(stripMarkdown(m.content).slice(0, 4000));
+    u.lang = "ar-SA";
+    u.rate = 1;
+    u.onend = () => setSpeakingId(null);
+    u.onerror = () => setSpeakingId(null);
+    synth.speak(u);
+    setSpeakingId(m.id);
+  }
 
   useEffect(() => {
     const saved = (localStorage.getItem("chatluck_theme") as "dark" | "light") || "dark";
@@ -813,6 +876,9 @@ export default function ChatPage() {
                       {idx === messages.length - 1 && activeConv && !busy && (
                         <button onClick={onRegenerate}>↻ إعادة التوليد</button>
                       )}
+                      <button onClick={() => toggleSpeak(m)}>
+                        {speakingId === m.id ? "⏸ إيقاف" : "🔊 استمع"}
+                      </button>
                     </div>
                   )}
                   {m.role === "user" &&
@@ -905,9 +971,19 @@ export default function ChatPage() {
                 <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
               </svg>
             </button>
+            {speechSupported && (
+              <button
+                className={`icon-btn mic-btn ${listening ? "listening" : ""}`}
+                title={listening ? "إيقاف الاستماع" : "اكتب بالصوت"}
+                onClick={toggleDictation}
+                disabled={busy}
+              >
+                🎙
+              </button>
+            )}
             <textarea
               rows={2}
-              placeholder={MODE_META[mode].placeholder}
+              placeholder={listening ? "بسمعك… اتكلم دلوقتي" : MODE_META[mode].placeholder}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
