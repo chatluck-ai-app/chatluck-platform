@@ -15,9 +15,24 @@ class Base(DeclarativeBase):
 
 
 def make_engine(database_url: str):
-    kwargs = {"future": True}
+    kwargs: dict = {"future": True}
     if database_url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
+    elif database_url.startswith("postgresql+asyncpg"):
+        # asyncpg does not understand libpq query options such as sslmode or
+        # channel_binding (Neon/Render connection strings carry them).
+        from sqlalchemy.engine import make_url
+
+        url = make_url(database_url)
+        query = dict(url.query)
+        sslmode = query.pop("sslmode", None)
+        query.pop("channel_binding", None)
+        url = url.set(query=query)
+        if sslmode in ("require", "verify-ca", "verify-full") or "neon.tech" in (url.host or ""):
+            kwargs["connect_args"] = {"ssl": "require"}
+        kwargs["pool_pre_ping"] = True
+        kwargs["pool_recycle"] = 300
+        database_url = url.render_as_string(hide_password=False)
     return create_async_engine(database_url, **kwargs)
 
 
