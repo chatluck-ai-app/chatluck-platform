@@ -1055,3 +1055,5 @@ body {
 
 .tools-pop-item .t-text { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
 .tools-pop-item .t-desc { font-size: .72rem; color: var(--dim, #9a8f6a); opacity: .85; line-height: 1.4; }
+
+.topbar-actions { margin-inline-start: auto; display: flex; gap: 6px; }
