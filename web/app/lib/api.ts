@@ -43,6 +43,52 @@ export function errorDetail(data: unknown, fallback: string): string {
   return fallback;
 }
 
+/** Map raw provider/HTTP error text to a friendly Arabic message. */
+export function friendlyError(raw: string): string {
+  const low = raw.toLowerCase();
+  if (low.includes("503") || low.includes("high demand") || low.includes("unavailable") || low.includes("overload"))
+    return "الخدمة مشغولة شوية دلوقتي بسبب الضغط، جرب تاني بعد ثواني.";
+  if (low.includes("429") || low.includes("rate limit") || low.includes("quota"))
+    return "وصلنا للحد المؤقت للطلبات، استنى دقيقة وجرب تاني.";
+  if (low.includes("no provider") || low.includes("all providers"))
+    return "مفيش مزود ذكاء اصطناعي متاح حالياً، جرب بعد شوية.";
+  if (low.includes("timeout") || low.includes("timed out"))
+    return "المزود استغرق وقت أطول من اللازم، جرب تاني.";
+  return "حصل خطأ غير متوقع أثناء تنفيذ طلبك، جرب تاني.";
+}
+
+/** True when the error looks transient and worth one automatic retry. */
+export function isTransientError(raw: string): boolean {
+  const low = raw.toLowerCase();
+  return (
+    low.includes("503") ||
+    low.includes("high demand") ||
+    low.includes("unavailable") ||
+    low.includes("overload") ||
+    low.includes("timeout") ||
+    low.includes("مشغولة")
+  );
+}
+
+export interface ConversationMatch {
+  id: string;
+  title: string;
+  updated_at: string;
+  snippet: string;
+}
+
+export async function searchConversations(
+  token: string,
+  q: string
+): Promise<ConversationMatch[]> {
+  const resp = await fetch(
+    `${API_URL}/v1/conversations/search?q=${encodeURIComponent(q)}`,
+    { headers: headers(token) }
+  );
+  if (!resp.ok) throw new Error("فشل البحث في المحادثات");
+  return resp.json();
+}
+
 function headers(token: string): HeadersInit {
   return {
     "Content-Type": "application/json",
@@ -296,7 +342,8 @@ export async function streamChatAbortable(
   model: string | null,
   h: StreamHandlers,
   attachments: AttachmentIn[] = [],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  opts: { regenerate?: boolean; editMessageId?: string } = {}
 ): Promise<void> {
   const resp = await fetch(`${API_URL}/v1/chat`, {
     method: "POST",
@@ -307,6 +354,8 @@ export async function streamChatAbortable(
       model,
       stream: true,
       attachments: attachments.length > 0 ? attachments : null,
+      regenerate: opts.regenerate || false,
+      edit_message_id: opts.editMessageId || null,
     }),
     signal,
   });
