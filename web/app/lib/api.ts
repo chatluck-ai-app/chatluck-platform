@@ -200,3 +200,151 @@ export async function streamChat(
     h.onMeta?.("", "", conversationIdSeen);
   }
 }
+
+export async function deleteConversation(
+  token: string,
+  id: string
+): Promise<void> {
+  const resp = await fetch(`${API_URL}/v1/conversations/${id}`, {
+    method: "DELETE",
+    headers: headers(token),
+  });
+  if (!resp.ok) throw new Error(errorDetail(await resp.json(), "فشل الحذف"));
+}
+
+export async function renameConversation(
+  token: string,
+  id: string,
+  title: string
+): Promise<void> {
+  const resp = await fetch(`${API_URL}/v1/conversations/${id}`, {
+    method: "PATCH",
+    headers: headers(token),
+    body: JSON.stringify({ title }),
+  });
+  if (!resp.ok)
+    throw new Error(errorDetail(await resp.json(), "فشل إعادة التسمية"));
+}
+
+export interface ImageResult {
+  url: string;
+  provider: string;
+  model: string;
+}
+
+export async function generateImage(
+  token: string,
+  prompt: string
+): Promise<ImageResult> {
+  const resp = await fetch(`${API_URL}/v1/images`, {
+    method: "POST",
+    headers: headers(token),
+    body: JSON.stringify({ prompt }),
+  });
+  if (!resp.ok)
+    throw new Error(errorDetail(await resp.json(), "فشل إنشاء الصورة"));
+  return resp.json();
+}
+
+export interface AgentInfo {
+  name: string;
+  description: string;
+  tools: string[];
+  sensitive: boolean;
+}
+
+export async function agentCatalog(token: string): Promise<AgentInfo[]> {
+  const resp = await fetch(`${API_URL}/v1/agent/catalog`, {
+    headers: headers(token),
+  });
+  if (!resp.ok) throw new Error("فشل تحميل المساعدين");
+  return resp.json();
+}
+
+export interface AgentStep {
+  agent: string;
+  instruction: string;
+  status: string;
+  output: string;
+}
+
+export interface AgentRunResult {
+  run_id: string;
+  status: string;
+  steps: AgentStep[];
+  blocked: string[];
+}
+
+export async function runAgent(
+  token: string,
+  task: string
+): Promise<AgentRunResult> {
+  const resp = await fetch(`${API_URL}/v1/agent/run`, {
+    method: "POST",
+    headers: headers(token),
+    body: JSON.stringify({ task, approved: false }),
+  });
+  if (!resp.ok)
+    throw new Error(errorDetail(await resp.json(), "فشل تشغيل المساعد"));
+  return resp.json();
+}
+
+export async function streamChatAbortable(
+  token: string,
+  message: string,
+  conversationId: string | null,
+  model: string | null,
+  h: StreamHandlers,
+  attachments: AttachmentIn[] = [],
+  signal?: AbortSignal
+): Promise<void> {
+  const resp = await fetch(`${API_URL}/v1/chat`, {
+    method: "POST",
+    headers: headers(token),
+    body: JSON.stringify({
+      message,
+      conversation_id: conversationId,
+      model,
+      stream: true,
+      attachments: attachments.length > 0 ? attachments : null,
+    }),
+    signal,
+  });
+  if (!resp.ok || !resp.body) {
+    const detail = await resp.text();
+    throw new Error(detail || `HTTP ${resp.status}`);
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let eventName = "";
+  let conversationIdSeen = conversationId;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (line.startsWith("event:")) {
+        eventName = line.slice(6).trim();
+      } else if (line.startsWith("data:")) {
+        const data = JSON.parse(line.slice(5).trim());
+        if (eventName === "meta") {
+          conversationIdSeen = data.conversation_id;
+        } else if (eventName === "token") {
+          h.onToken?.(data.content);
+        } else if (eventName === "fallback") {
+          h.onFallback?.(data.from, data.reason);
+        } else if (eventName === "error") {
+          h.onError?.(data.error);
+        } else if (eventName === "done") {
+          h.onDone?.(data.provider, data.model);
+        }
+      }
+    }
+  }
+  if (conversationIdSeen) {
+    h.onMeta?.("", "", conversationIdSeen);
+  }
+}
