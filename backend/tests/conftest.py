@@ -57,6 +57,8 @@ class FakeProvider(BaseProvider):
 
     async def chat_stream(self, messages, model=None, **kw):
         self._maybe_fail()
+        self.last_messages = messages
+        self.calls_log.append(messages)
         for token in ["أهلاً", "! ", "أنا شات لاك."]:
             yield token
 
