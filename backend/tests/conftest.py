@@ -86,9 +86,11 @@ def make_router(*providers, failure_threshold=3, cooldown=120.0):
 
 @pytest_asyncio.fixture()
 async def client(settings):
-    router = make_router(FakeProvider())
+    fake = FakeProvider()
+    router = make_router(fake)
     app = create_app(settings, provider_router=router,
                      rate_limiter=RateLimiter(1000))
+    app.state.fake = fake
     await init_db(app.state.engine)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
