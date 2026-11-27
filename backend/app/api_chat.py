@@ -20,7 +20,7 @@ from .deps import (
 )
 from .brain import auto_learn, memory_block
 from .execution.search import search_web
-from .models import Conversation, GeneratedImage, MemoryItem, Message, User
+from .models import Assistant, Conversation, GeneratedImage, MemoryItem, Message, User
 from .providers.base import Message as ProviderMessage
 from .schemas import (
     ChatRequest,
@@ -179,8 +179,18 @@ async def _load_history(session, conversation_id: str) -> list[ProviderMessage]:
     return [{"role": m.role, "content": m.content} for m in result.scalars().all()]
 
 
+async def _assistant_block(session, conv: Conversation) -> str:
+    if not conv.assistant_id:
+        return ""
+    a = await session.get(Assistant, conv.assistant_id)
+    if a is None or not a.instructions.strip():
+        return ""
+    return f"\n\nتعليمات المساعد المخصص ({a.name}):\n{a.instructions.strip()}"
+
+
 async def _get_or_create_conversation(
-    session, user: User, conversation_id: str | None, first_message: str
+    session, user: User, conversation_id: str | None, first_message: str,
+    assistant_id: str | None = None,
 ) -> Conversation:
     if conversation_id:
         result = await session.execute(
@@ -192,7 +202,13 @@ async def _get_or_create_conversation(
                 status_code=status.HTTP_404_NOT_FOUND, detail="conversation not found"
             )
         return conv
-    conv = Conversation(user_id=user.id, title=first_message[:80])
+    if assistant_id:
+        a = await session.get(Assistant, assistant_id)
+        if a is None or a.user_id != user.id:
+            raise HTTPException(status_code=404, detail="assistant not found")
+    conv = Conversation(
+        user_id=user.id, title=first_message[:80], assistant_id=assistant_id or None
+    )
     session.add(conv)
     await session.flush()
     return conv
@@ -213,7 +229,8 @@ async def chat(
     if body.stream:
         return await _chat_stream(body, request, user, session)
     conv = await _get_or_create_conversation(
-        session, user, body.conversation_id, body.title_hint or body.message
+        session, user, body.conversation_id, body.title_hint or body.message,
+        body.assistant_id,
     )
     if body.regenerate or body.edit_message_id:
         await _apply_edit_or_regenerate(session, conv, body)
@@ -229,7 +246,7 @@ async def chat(
     history = [
         {
             "role": "system",
-            "content": SYSTEM_PROMPT + await memory_block(session, user.id) + grounding_block,
+            "content": SYSTEM_PROMPT + await _assistant_block(session, conv) + await memory_block(session, user.id) + grounding_block,
         }
     ]
     history += await _load_history(session, conv.id)
@@ -281,7 +298,8 @@ async def chat(
 
 async def _chat_stream(body: ChatRequest, request: Request, user: User, session):
     conv = await _get_or_create_conversation(
-        session, user, body.conversation_id, body.title_hint or body.message
+        session, user, body.conversation_id, body.title_hint or body.message,
+        body.assistant_id,
     )
     if body.regenerate or body.edit_message_id:
         await _apply_edit_or_regenerate(session, conv, body)
@@ -296,7 +314,7 @@ async def _chat_stream(body: ChatRequest, request: Request, user: User, session)
     history = [
         {
             "role": "system",
-            "content": SYSTEM_PROMPT + await memory_block(session, user.id) + grounding_block,
+            "content": SYSTEM_PROMPT + await _assistant_block(session, conv) + await memory_block(session, user.id) + grounding_block,
         }
     ]
     history += await _load_history(session, conv.id)
@@ -552,11 +570,13 @@ async def image_history(
 
 @router.get("/conversations", response_model=list[ConversationResponse])
 async def list_conversations(
-    user: User = Depends(get_current_user), session=Depends(get_session)
+    archived: bool = False,
+    user: User = Depends(get_current_user),
+    session=Depends(get_session),
 ):
     result = await session.execute(
         select(Conversation)
-        .where(Conversation.user_id == user.id)
+        .where(Conversation.user_id == user.id, Conversation.archived == archived)
         .order_by(Conversation.updated_at.desc())
     )
     return [
@@ -565,6 +585,9 @@ async def list_conversations(
             title=c.title,
             created_at=c.created_at.isoformat(),
             updated_at=c.updated_at.isoformat(),
+            archived=bool(c.archived),
+            shared=bool(c.share_token),
+            assistant_id=c.assistant_id,
         )
         for c in result.scalars().all()
     ]
@@ -629,16 +652,24 @@ async def rename_conversation(
     conv = result.scalar_one_or_none()
     if conv is None or conv.user_id != user.id:
         raise HTTPException(status_code=404, detail="conversation not found")
-    title = (body.get("title") or "").strip()
-    if not title or len(title) > 200:
-        raise HTTPException(status_code=422, detail="title must be 1-200 characters")
-    conv.title = title
+    if "title" in body or "archived" not in body:
+        title = (body.get("title") or "").strip()
+        if not title or len(title) > 200:
+            raise HTTPException(status_code=422, detail="title must be 1-200 characters")
+        conv.title = title
+    if "archived" in body:
+        if not isinstance(body["archived"], bool):
+            raise HTTPException(status_code=422, detail="archived must be true or false")
+        conv.archived = body["archived"]
     await session.commit()
     return ConversationResponse(
         id=conv.id,
         title=conv.title,
         created_at=conv.created_at.isoformat(),
         updated_at=conv.updated_at.isoformat(),
+        archived=bool(conv.archived),
+        shared=bool(conv.share_token),
+        assistant_id=conv.assistant_id,
     )
 
 

@@ -51,6 +51,13 @@ class Conversation(Base):
     project_id: Mapped[str | None] = mapped_column(
         ForeignKey("projects.id", ondelete="SET NULL"), nullable=True
     )
+    archived: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    share_token: Mapped[str | None] = mapped_column(
+        String(40), nullable=True, unique=True, index=True
+    )
+    assistant_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now
@@ -196,3 +203,15 @@ class UsageRecord(Base):
     day: Mapped[str] = mapped_column(String(10), index=True)  # UTC YYYY-MM-DD
     kind: Mapped[str] = mapped_column(String(12))  # message | heavy | image
     count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class Assistant(Base):
+    """User-defined assistant: a name plus standing instructions."""
+
+    __tablename__ = "assistants"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str] = mapped_column(String(60))
+    instructions: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

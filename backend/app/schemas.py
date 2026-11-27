@@ -65,6 +65,7 @@ class ChatRequest(BaseModel):
     regenerate: bool = False  # re-answer the last user message
     edit_message_id: str | None = None  # replace this user message, drop later ones
     title_hint: str | None = None  # preferred title when creating a conversation
+    assistant_id: str | None = None  # bind a custom assistant to a NEW conversation
 
 
 class ChatResponse(BaseModel):
@@ -81,6 +82,9 @@ class ConversationResponse(BaseModel):
     title: str
     created_at: str
     updated_at: str
+    archived: bool = False
+    shared: bool = False
+    assistant_id: str | None = None
 
 
 class ModelInfoResponse(BaseModel):

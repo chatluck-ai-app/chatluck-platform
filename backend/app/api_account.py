@@ -14,6 +14,7 @@ from .deps import get_current_user, get_session, get_settings
 from .models import (
     AgentRun,
     AgentStep,
+    Assistant,
     AuditLog,
     Conversation,
     GeneratedImage,
@@ -89,7 +90,7 @@ async def delete_account(
     run_ids = select(AgentRun.id).where(AgentRun.user_id == uid)
     await session.execute(delete(Message).where(Message.conversation_id.in_(conv_ids)))
     await session.execute(delete(AgentStep).where(AgentStep.run_id.in_(run_ids)))
-    for model in (AgentRun, GeneratedImage, MemoryItem, Project, Conversation):
+    for model in (Assistant, AgentRun, GeneratedImage, MemoryItem, Project, Conversation):
         await session.execute(delete(model).where(model.user_id == uid))
     await session.execute(delete(UsageRecord).where(UsageRecord.user_id == uid))
     await session.execute(delete(AuditLog).where(AuditLog.user_id == uid))

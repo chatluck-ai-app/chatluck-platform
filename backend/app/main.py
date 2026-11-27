@@ -33,6 +33,21 @@ def _ensure_columns_sync(sync_conn) -> None:
                 + ("FALSE" if pg else "0")
             )
         )
+    ccols = {c["name"] for c in inspect(sync_conn).get_columns("conversations")}
+    if "archived" not in ccols:
+        sync_conn.execute(
+            text(
+                "ALTER TABLE conversations ADD COLUMN archived BOOLEAN NOT NULL DEFAULT "
+                + ("FALSE" if pg else "0")
+            )
+        )
+    if "share_token" not in ccols:
+        sync_conn.execute(text("ALTER TABLE conversations ADD COLUMN share_token VARCHAR(40)"))
+        sync_conn.execute(
+            text("CREATE UNIQUE INDEX IF NOT EXISTS ix_conversations_share_token ON conversations (share_token)")
+        )
+    if "assistant_id" not in ccols:
+        sync_conn.execute(text("ALTER TABLE conversations ADD COLUMN assistant_id VARCHAR(32)"))
     if "memory_enabled" not in cols:
         default = "TRUE" if sync_conn.dialect.name == "postgresql" else "1"
         sync_conn.execute(
@@ -103,6 +118,7 @@ def create_app(
     from .api_admin import router as admin_router
     from .stickers import router as stickers_router
     from .api_account import router as account_router
+    from .api_polish import router as polish_router
 
     app.include_router(auth_router)
     app.include_router(chat_router)
@@ -112,6 +128,7 @@ def create_app(
     app.include_router(admin_router)
     app.include_router(stickers_router)
     app.include_router(account_router)
+    app.include_router(polish_router)
 
     from fastapi.staticfiles import StaticFiles
 
