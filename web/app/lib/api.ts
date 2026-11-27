@@ -14,6 +14,15 @@ export interface Conversation {
   title: string;
   created_at: string;
   updated_at: string;
+  archived?: boolean;
+  shared?: boolean;
+  assistant_id?: string | null;
+}
+
+export interface Assistant {
+  id: string;
+  name: string;
+  instructions: string;
 }
 
 export interface ModelInfo {
@@ -133,8 +142,11 @@ export async function login(email: string, password: string): Promise<string> {
   return (await resp.json()).access_token;
 }
 
-export async function listConversations(token: string): Promise<Conversation[]> {
-  const resp = await fetch(`${API_URL}/v1/conversations`, {
+export async function listConversations(
+  token: string,
+  archived = false
+): Promise<Conversation[]> {
+  const resp = await fetch(`${API_URL}/v1/conversations?archived=${archived}`, {
     headers: headers(token),
   });
   if (!resp.ok) throw new Error("failed to load conversations");
@@ -506,7 +518,12 @@ export async function streamChatAbortable(
   h: StreamHandlers,
   attachments: AttachmentIn[] = [],
   signal?: AbortSignal,
-  opts: { regenerate?: boolean; editMessageId?: string; titleHint?: string } = {}
+  opts: {
+    regenerate?: boolean;
+    editMessageId?: string;
+    titleHint?: string;
+    assistantId?: string;
+  } = {}
 ): Promise<void> {
   const resp = await fetch(`${API_URL}/v1/chat`, {
     method: "POST",
@@ -520,6 +537,7 @@ export async function streamChatAbortable(
       regenerate: opts.regenerate || false,
       edit_message_id: opts.editMessageId || null,
       title_hint: opts.titleHint || null,
+      assistant_id: opts.assistantId || null,
     }),
     signal,
   });
@@ -580,4 +598,63 @@ export async function adminStats(token: string): Promise<AdminStats> {
   const resp = await fetch(`${API_URL}/v1/admin/stats`, { headers: headers(token) });
   if (!resp.ok) throw new Error(errorDetail(await resp.json(), "تعذر تحميل الإحصائيات"));
   return resp.json();
+}
+
+export async function setArchived(
+  token: string,
+  id: string,
+  archived: boolean
+): Promise<void> {
+  const resp = await fetch(`${API_URL}/v1/conversations/${id}`, {
+    method: "PATCH",
+    headers: headers(token),
+    body: JSON.stringify({ archived }),
+  });
+  if (!resp.ok) throw new Error("فشل الأرشفة");
+}
+
+export async function shareConversation(token: string, id: string): Promise<string> {
+  const resp = await fetch(`${API_URL}/v1/conversations/${id}/share`, {
+    method: "POST",
+    headers: headers(token),
+  });
+  if (!resp.ok) throw new Error("فشل إنشاء رابط المشاركة");
+  const data = await resp.json();
+  return `${API_URL}${data.path}`;
+}
+
+export async function unshareConversation(token: string, id: string): Promise<void> {
+  const resp = await fetch(`${API_URL}/v1/conversations/${id}/share`, {
+    method: "DELETE",
+    headers: headers(token),
+  });
+  if (!resp.ok) throw new Error("فشل إلغاء المشاركة");
+}
+
+export async function listAssistants(token: string): Promise<Assistant[]> {
+  const resp = await fetch(`${API_URL}/v1/assistants`, { headers: headers(token) });
+  if (!resp.ok) throw new Error("failed to load assistants");
+  return resp.json();
+}
+
+export async function createAssistant(
+  token: string,
+  name: string,
+  instructions: string
+): Promise<Assistant> {
+  const resp = await fetch(`${API_URL}/v1/assistants`, {
+    method: "POST",
+    headers: headers(token),
+    body: JSON.stringify({ name, instructions }),
+  });
+  if (!resp.ok) throw new Error(errorDetail(await resp.json(), "فشل إنشاء المساعد"));
+  return resp.json();
+}
+
+export async function deleteAssistant(token: string, id: string): Promise<void> {
+  const resp = await fetch(`${API_URL}/v1/assistants/${id}`, {
+    method: "DELETE",
+    headers: headers(token),
+  });
+  if (!resp.ok) throw new Error("فشل حذف المساعد");
 }
