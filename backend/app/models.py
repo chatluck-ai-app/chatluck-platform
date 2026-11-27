@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, true
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, false, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -28,6 +28,10 @@ class User(Base):
     oauth_provider: Mapped[str | None] = mapped_column(String(40), nullable=True)
     memory_enabled: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default=true()
+    )
+    plan: Mapped[str] = mapped_column(String(20), default="free", server_default="free")
+    is_guest: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -169,3 +173,26 @@ class GeneratedImage(Base):
     height: Mapped[int] = mapped_column(default=1024)
     style: Mapped[str] = mapped_column(String(40), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class PlanLimit(Base):
+    """Daily limits per plan. Editable by an admin (no redeploy)."""
+
+    __tablename__ = "plan_limits"
+
+    plan: Mapped[str] = mapped_column(String(20), primary_key=True)
+    label: Mapped[str] = mapped_column(String(60), default="")
+    daily_messages: Mapped[int] = mapped_column(Integer, default=50)
+    daily_heavy: Mapped[int] = mapped_column(Integer, default=10)  # vision + research
+    daily_images: Mapped[int] = mapped_column(Integer, default=5)
+
+
+class UsageRecord(Base):
+    __tablename__ = "usage_records"
+    __table_args__ = (UniqueConstraint("user_id", "day", "kind", name="uq_usage"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String(32), index=True)
+    day: Mapped[str] = mapped_column(String(10), index=True)  # UTC YYYY-MM-DD
+    kind: Mapped[str] = mapped_column(String(12))  # message | heavy | image
+    count: Mapped[int] = mapped_column(Integer, default=0)

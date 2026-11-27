@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
+from .plans import consume
 from .deps import (
     audit,
     get_current_user,
@@ -205,6 +206,10 @@ async def chat(
     session=Depends(get_session),
 ):
     _check_rate_limit(request, user, heavy=bool(body.attachments))
+    await consume(session, user, "message")
+    if body.attachments:
+        await consume(session, user, "heavy")
+    await session.commit()
     if body.stream:
         return await _chat_stream(body, request, user, session)
     conv = await _get_or_create_conversation(
@@ -460,6 +465,8 @@ async def generate_image(
     session=Depends(get_session),
 ):
     _check_rate_limit(request, user)
+    await consume(session, user, "image")
+    await session.commit()
     prompt = (body.get("prompt") or "").strip()
     if not prompt:
         raise HTTPException(status_code=422, detail="prompt is required")

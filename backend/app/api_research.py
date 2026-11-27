@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from .plans import consume
 from .api_chat import _check_rate_limit, friendly_error
 from .deps import audit, get_current_user, get_router, get_session
 from .execution.search import search_web
@@ -39,6 +40,8 @@ async def research(
     session=Depends(get_session),
 ):
     _check_rate_limit(request, user, heavy=True)
+    await consume(session, user, "heavy")
+    await session.commit()
     results = await search_web(body.query, limit=5)
     if not results:
         raise HTTPException(

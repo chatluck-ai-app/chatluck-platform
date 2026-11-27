@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 
+from .client_ip import client_ip
 from .auth import create_access_token, hash_password, verify_password
 from .deps import audit, get_current_user, get_session, get_settings
 from .models import User
@@ -26,7 +27,7 @@ def _client_ip(request: Request) -> str:
 
 @router.post("/register", response_model=TokenResponse)
 async def register(body: RegisterRequest, request: Request, session=Depends(get_session)):
-    if not request.app.state.register_limiter.allow(f"reg:{_client_ip(request)}"):
+    if not request.app.state.register_limiter.allow(f"reg:{client_ip(request)}"):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="محاولات تسجيل كتير من نفس الجهاز — جرّب بعد ساعة",

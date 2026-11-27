@@ -21,6 +21,18 @@ def _ensure_columns_sync(sync_conn) -> None:
     from sqlalchemy import inspect, text
 
     cols = {c["name"] for c in inspect(sync_conn).get_columns("users")}
+    pg = sync_conn.dialect.name == "postgresql"
+    if "plan" not in cols:
+        sync_conn.execute(
+            text("ALTER TABLE users ADD COLUMN plan VARCHAR(20) NOT NULL DEFAULT 'free'")
+        )
+    if "is_guest" not in cols:
+        sync_conn.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN is_guest BOOLEAN NOT NULL DEFAULT "
+                + ("FALSE" if pg else "0")
+            )
+        )
     if "memory_enabled" not in cols:
         default = "TRUE" if sync_conn.dialect.name == "postgresql" else "1"
         sync_conn.execute(
@@ -49,6 +61,10 @@ def create_app(
     async def lifespan(app: FastAPI):
         await init_db(engine)
         await _ensure_columns(engine)
+        async with session_factory() as s:
+            from .plans import seed_plans
+
+            await seed_plans(s)
         yield
 
     app = FastAPI(title="Chat Luck AI", version="0.1.0", lifespan=lifespan)
@@ -86,6 +102,7 @@ def create_app(
     from .api_research import router as research_router
     from .api_admin import router as admin_router
     from .stickers import router as stickers_router
+    from .api_account import router as account_router
 
     app.include_router(auth_router)
     app.include_router(chat_router)
@@ -94,6 +111,7 @@ def create_app(
     app.include_router(agent_router)
     app.include_router(admin_router)
     app.include_router(stickers_router)
+    app.include_router(account_router)
 
     from fastapi.staticfiles import StaticFiles
 
