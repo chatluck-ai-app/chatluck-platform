@@ -4,6 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 import {
   AgentInfo,
   AttachmentIn,
@@ -21,6 +24,12 @@ import {
   updateMemory,
   changePassword,
   deleteConversation,
+  setArchived,
+  shareConversation,
+  listAssistants,
+  createAssistant,
+  deleteAssistant,
+  type Assistant,
   deleteMemory,
   extractFile,
   friendlyError,
@@ -91,6 +100,10 @@ export default function ChatPage() {
   const router = useRouter();
   const [token, setToken] = useState<string | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
+  const [assistants, setAssistants] = useState<Assistant[]>([]);
+  const [assistantId, setAssistantId] = useState("");
+  const [offline, setOffline] = useState(false);
   const [activeConv, setActiveConv] = useState<string | null>(null);
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [models, setModels] = useState<ModelInfo[]>([]);
@@ -388,11 +401,28 @@ ${rows}
 
   const refreshConversations = useCallback(async (t: string) => {
     try {
-      setConversations(await listConversations(t));
+      setConversations(await listConversations(t, showArchived));
     } catch {
       /* keep previous list */
     }
+  }, [showArchived]);
+
+  useEffect(() => {
+    const up = () => setOffline(false);
+    const down = () => setOffline(true);
+    setOffline(typeof navigator !== "undefined" && !navigator.onLine);
+    window.addEventListener("online", up);
+    window.addEventListener("offline", down);
+    return () => {
+      window.removeEventListener("online", up);
+      window.removeEventListener("offline", down);
+    };
   }, []);
+
+  useEffect(() => {
+    if (!token) return;
+    listAssistants(token).then(setAssistants).catch(() => {});
+  }, [token]);
 
   useEffect(() => {
     if (!token) return;
@@ -563,7 +593,7 @@ ${rows}
             },
             atts,
             controller.signal,
-            opts
+            { ...opts, assistantId: !activeConv && assistantId ? assistantId : undefined }
           );
         } catch (e) {
           if (!controller.signal.aborted) {
@@ -763,6 +793,61 @@ ${rows}
     }
   }
 
+  async function onArchiveConv(id: string, archived: boolean) {
+    if (!token) return;
+    try {
+      await setArchived(token, id, archived);
+      if (activeConv === id) {
+        setActiveConv(null);
+        setMessages([]);
+      }
+      refreshConversations(token);
+    } catch {
+      setStatus("فشلت الأرشفة");
+    }
+  }
+
+  async function onShareConv(id: string) {
+    if (!token) return;
+    try {
+      const url = await shareConversation(token, id);
+      try {
+        await navigator.clipboard.writeText(url);
+        setStatus("تم نسخ رابط المشاركة (للقراءة فقط)");
+      } catch {
+        window.prompt("رابط المشاركة (للقراءة فقط):", url);
+      }
+    } catch {
+      setStatus("فشل إنشاء رابط المشاركة");
+    }
+  }
+
+  async function onNewAssistant() {
+    if (!token) return;
+    const name = window.prompt("اسم المساعد:");
+    if (!name || !name.trim()) return;
+    const instructions = window.prompt("تعليمات المساعد (ازاي يتصرف؟):") || "";
+    try {
+      const a = await createAssistant(token, name.trim(), instructions);
+      setAssistants((xs) => [...xs, a]);
+      setAssistantId(a.id);
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "فشل إنشاء المساعد");
+    }
+  }
+
+  async function onDeleteAssistant() {
+    if (!token || !assistantId) return;
+    if (!window.confirm("مسح المساعد ده؟ المحادثات هتفضل موجودة.")) return;
+    try {
+      await deleteAssistant(token, assistantId);
+      setAssistants((xs) => xs.filter((a) => a.id !== assistantId));
+      setAssistantId("");
+    } catch {
+      setStatus("فشل حذف المساعد");
+    }
+  }
+
   async function onRenameConv(id: string, oldTitle: string) {
     if (!token) return;
     const title = window.prompt("اسم المحادثة الجديد:", oldTitle);
@@ -843,6 +928,27 @@ ${rows}
             ))}
           </div>
         )}
+        <div className="assistant-row">
+          <select
+            value={assistantId}
+            onChange={(e) => setAssistantId(e.target.value)}
+            title="المساعد للمحادثة الجديدة"
+          >
+            <option value="">مساعد شات لاك (افتراضي)</option>
+            {assistants.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+          <button onClick={onNewAssistant} title="مساعد جديد">＋</button>
+          {assistantId && (
+            <button onClick={onDeleteAssistant} title="مسح المساعد">🗑️</button>
+          )}
+        </div>
+        <button className="settings-btn" onClick={() => setShowArchived((v) => !v)}>
+          {showArchived ? "← رجوع للمحادثات" : "📦 المؤرشفة"}
+        </button>
         {searchResults === null && conversations.map((c) => (
           <div
             key={c.id}
@@ -867,6 +973,24 @@ ${rows}
                 ✏️
               </button>
               <button
+                title="مشاركة (رابط للقراءة فقط)"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onShareConv(c.id);
+                }}
+              >
+                🔗
+              </button>
+              <button
+                title={showArchived ? "إلغاء الأرشفة" : "أرشفة"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onArchiveConv(c.id, !showArchived);
+                }}
+              >
+                📦
+              </button>
+              <button
                 title="حذف"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -888,6 +1012,11 @@ ${rows}
       </aside>
 
       <main className="main">
+        {offline && (
+          <div className="offline-banner" role="status">
+            مفيش اتصال بالإنترنت — الرسائل مش هتتبعت لحد ما يرجع.
+          </div>
+        )}
         <div className="topbar">
           <button className="menu-btn" onClick={() => setSidebarOpen(!sidebarOpen)}>
             ☰
@@ -942,7 +1071,7 @@ ${rows}
                     </div>
                   ) : m.role === "assistant" ? (
                     <div className={`md ${m.streaming ? "cursor" : ""}`}>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
                         {m.content || "…"}
                       </ReactMarkdown>
                     </div>
