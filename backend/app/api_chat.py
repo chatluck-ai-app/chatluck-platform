@@ -143,8 +143,14 @@ async def _apply_edit_or_regenerate(session, conv: Conversation, body: ChatReque
     await session.flush()
 
 
-def _check_rate_limit(request: Request, user: User) -> None:
+def _check_rate_limit(request: Request, user: User, heavy: bool = False) -> None:
     limiter = get_rate_limiter(request)
+    if heavy and not request.app.state.heavy_limiter.allow(user.id):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="طلبات الصور والبحث كتيرة على جهازك، استنى شوية وجرب تاني.",
+            headers={"Retry-After": "15"},
+        )
     if not limiter.allow(user.id):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -198,7 +204,7 @@ async def chat(
     user: User = Depends(get_current_user),
     session=Depends(get_session),
 ):
-    _check_rate_limit(request, user)
+    _check_rate_limit(request, user, heavy=bool(body.attachments))
     if body.stream:
         return await _chat_stream(body, request, user, session)
     conv = await _get_or_create_conversation(

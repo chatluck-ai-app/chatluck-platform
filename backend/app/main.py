@@ -71,6 +71,12 @@ def create_app(
     )
     app.state.global_chat_limiter = RateLimiter(settings.global_chat_per_minute)
     app.state.daily_chat = DailyCounter(settings.global_chat_per_day)
+    # Per-device limit for the expensive calls (vision attachments, research):
+    # at most `heavy_per_minute` per user, so one device cannot burn the
+    # shared free quota for everybody.
+    app.state.heavy_limiter = RateLimiter(
+        settings.heavy_per_minute, burst=float(settings.heavy_per_minute)
+    )
 
     from .api_auth import router as auth_router
     from .api_chat import router as chat_router

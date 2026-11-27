@@ -29,6 +29,7 @@ class Settings:
     register_per_hour_per_ip: int = 10
     global_chat_per_minute: int = 25
     global_chat_per_day: int = 1200
+    heavy_per_minute: int = 6
 
     environment: str = "development"
 
@@ -63,6 +64,7 @@ class Settings:
         s.global_chat_per_day = int(
             os.environ.get("GLOBAL_CHAT_PER_DAY", s.global_chat_per_day)
         )
+        s.heavy_per_minute = int(os.environ.get("HEAVY_PER_MINUTE", s.heavy_per_minute))
         if s.environment == "production" and s.jwt_secret == cls.jwt_secret:
             raise RuntimeError("JWT_SECRET must be set in production")
         return s
