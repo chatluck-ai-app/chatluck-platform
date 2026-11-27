@@ -1057,3 +1057,26 @@ body {
 .tools-pop-item .t-desc { font-size: .72rem; color: var(--dim, #9a8f6a); opacity: .85; line-height: 1.4; }
 
 .topbar-actions { margin-inline-start: auto; display: flex; gap: 6px; }
+
+.offline-banner {
+  background: #7a1f1f;
+  color: #fff;
+  text-align: center;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.assistant-row {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+}
+.assistant-row select {
+  flex: 1;
+  min-width: 0;
+}
+.assistant-row button {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+}
